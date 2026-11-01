@@ -16,7 +16,9 @@ const imageObserver=new IntersectionObserver(entries=>{
     else target.removeAttribute('src');
   }
 },{root:$('#content'),rootMargin:'240px 0px'});
-const state={data:{},view:'library',filter:'all',query:'',year:'',type:'',sort:'name',subtitle:'',mode:localStorage.getItem('library-view')||'grid',id:null,tab:'chapters',selected:null,token:0,busy:false};
+const savedSort=localStorage.getItem('library-sort');
+const initialSort=['name','year','score','progress'].includes(savedSort)?savedSort:'name';
+const state={data:{},view:'library',filter:'all',query:'',year:'',type:'',sort:initialSort,subtitle:'',mode:localStorage.getItem('library-view')||'grid',id:null,tab:'chapters',selected:null,token:0,busy:false};
 const apiCache=new Map();
 const episodeNames=new Map();
 const catalogueCache=new Map();
@@ -236,7 +238,7 @@ $('#subtitle-filter').onchange=event=>{state.subtitle=event.target.value;renderL
 $('#scan-subtitles').onclick=async()=>{try{const progress=await ipc.invoke('subtitles:scan-all');showSubtitleProgress(progress);}catch(error){notice(error.message);}};
 function showSubtitleProgress(progress){const control=$('#scan-subtitles');control.disabled=progress.running;control.textContent=progress.running?'检测字幕 '+progress.done+'/'+progress.total:'检测全库字幕';if(!progress.running){read().then(()=>{if(['library','watching'].includes(state.view))render();}).catch(error=>notice(error.message));notice(progress.error||'字幕检测完成；画面内嵌仍需人工确认。');}}
 ipc.on('subtitles:progress',(_event,progress)=>showSubtitleProgress(progress));
-$('#year').onchange=event=>{state.year=event.target.value;renderLibrary();};$('#sort').onchange=event=>{state.sort=event.target.value;renderLibrary();};
+$('#year').onchange=event=>{state.year=event.target.value;renderLibrary();};$('#sort').value=state.sort;$('#sort').onchange=event=>{state.sort=event.target.value;localStorage.setItem('library-sort',state.sort);renderLibrary();};
 for(const mode of ['grid','list'])$('#'+mode+'-view').onclick=()=>{state.mode=mode;localStorage.setItem('library-view',mode);renderLibrary();};
 $('#refresh').onclick=async()=>{const control=$('#refresh');control.disabled=true;control.textContent='检查文件中…';try{if(state.view==='organizer'){await organizerUI.refresh();return;}const result=await ipc.invoke('library:recheck');adopt(result.data);apiCache.clear();catalogueCache.clear();state.token++;render();notice('已检查 '+result.report.checked+' 个文件'+(result.report.removed?'，清理 '+result.report.removed+' 条已删除的异常记录':'，文件状态已更新'));}catch(error){notice('刷新失败：'+error.message);}finally{control.disabled=false;control.textContent='↻ 刷新';}};
 document.addEventListener('keydown',event=>{if(event.ctrlKey&&event.key.toLowerCase()==='k'){event.preventDefault();if(!['library','watching'].includes(state.view))activate('library');$('#search').focus();}if(event.key==='Escape'&&state.view==='detail'&&!['INPUT','TEXTAREA'].includes(document.activeElement.tagName))returnToLibrary();});
