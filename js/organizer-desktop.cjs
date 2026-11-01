@@ -95,7 +95,15 @@ function create({ipc,node,button,notice,setHeader,container,isActive}){
     const card=el('details','plan-review-row'+(item.attention?' needs-attention':'')+(row.skip?' skipped':''));card.open=state.expanded.has(row.source);card.ontoggle=()=>{if(!card.isConnected)return;if(card.open){state.expanded.add(row.source);mountEditor();}else state.expanded.delete(row.source);};
     const summary=el('summary','plan-review-summary'),source=el('span','plan-row-source',require('path').basename(row.source)),target=el('span','plan-row-target',row.skip?'保持原样':item.targetLabel);source.title=row.source;target.title=item.target||item.reasons.join('\n');summary.append(source,el('span','plan-row-arrow','→'),target,el('span','plan-row-status',item.status));card.appendChild(summary);if(item.attention){const warning=el('small','plan-row-problem',item.reasons[0]);warning.title=item.reasons.join('\n');summary.appendChild(warning);}
     function mountEditor(){if(card.dataset.loaded)return;card.dataset.loaded='true';
-    const body=el('div','plan-row-editor');for(const reason of item.reasons)body.appendChild(el('p','plan-row-warning',reason));body.append(hint('源文件：'+row.source),hint('最终目标：'+(item.target||'待确认')));const grid=el('div','organizer-form-grid');
+    const body=el('div','plan-row-editor');for(const reason of item.reasons)body.appendChild(el('p','plan-row-warning',reason));body.append(hint('源文件：'+row.source),hint('最终目标：'+(item.target||'待确认')));const recognition=row.recognition;
+    if(recognition){
+      const evidence=(recognition.evidence||[]).map(item=>item.text.trim()+' → '+item.number);
+      if(evidence.length)body.appendChild(hint('文件名集号依据：'+evidence.join('；')));
+      const roles={group:'发布组',group_candidate:'发布组候选',title:'作品名',technical:'技术参数',checksum:'校验值',year:'年份'};
+      const excluded=(recognition.fields||[]).map(item=>(roles[item.role]||item.role)+' '+item.text);
+      if(excluded.length)body.appendChild(hint('已排除的元数据：'+excluded.join('；')));
+    }
+    const grid=el('div','organizer-form-grid');
     if(plan.context.layout==='bangumi'){
       const subjects={[String(plan.context.subject_id)]:plan.context,...plan.context.subjects};const sid=String(row.subject_id||plan.context.subject_id);const subject=select(Object.entries(subjects).map(([id,s])=>[id,s.name+' · '+id]),sid);subject.onchange=()=>{row.subject_id=subject.value;row.episode_id=null;row.category='unresolved';invalid();render();};grid.appendChild(label('归属作品',subject));
       const category=select([['episode','匹配章节'],['extra','附加资源'],['unresolved','待确认']],row.category);category.onchange=()=>{row.category=category.value;invalid();};grid.appendChild(label('资源类型',category));
