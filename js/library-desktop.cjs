@@ -87,7 +87,23 @@ function posterCard(work){
   const link=button('',()=>openDetail(work.id),'poster-link');link.setAttribute('aria-label','查看 '+work.Name);
   const poster=node('div','poster');poster.appendChild(image(work));
   if(Number(work.Score)>0)poster.appendChild(node('span','score-badge','★ '+work.Score));
-  const bar=node('div','poster-progress'),fill=node('span');fill.style.width=p.percent+'%';bar.appendChild(fill);poster.appendChild(bar);link.appendChild(poster);card.appendChild(link);
+  const bar=node('div','poster-progress'),fill=node('span');fill.style.width=p.percent+'%';bar.appendChild(fill);poster.appendChild(bar);link.appendChild(poster);
+  const frame=node('div','poster-frame');frame.appendChild(link);
+  const complete=p.total>0&&p.watched===p.total;
+  const watched=button(complete?'✓ 已看过':'✓ 看过',async()=>{
+    if(state.busy)return;
+    watched.disabled=true;
+    const scroll=$('#content').scrollTop;
+    const changes=Object.fromEntries(slots(work).map(([key])=>['EPDetails.'+key+'.Condition',complete?'Unwatched':'Watched']));
+    if(await edit(work,changes)){
+      if(['library','watching'].includes(state.view)){renderLibrary();$('#content').scrollTop=scroll;}
+    }else if(watched.isConnected)watched.disabled=false;
+  },'poster-watched'+(complete?' complete':''));
+  watched.disabled=!p.total;
+  watched.setAttribute('aria-label',(complete?'将全部正片标为未看：':'将全部正片标为看过：')+work.Name);
+  watched.setAttribute('aria-pressed',String(complete));
+  watched.title=!p.total?'暂无正片章节':complete?'点击将全部正片标为未看':'将全部正片标为看过';
+  frame.appendChild(watched);card.appendChild(frame);
   const title=node('div','work-title',work.Name);title.title=work.Name;card.appendChild(title);
   const meta=node('div','work-meta');meta.append(node('span','',work.Year==='0000'?'年份未知':work.Year),node('span','','· '+(work.Type||'动画')),node('span','progress-label',p.watched+' / '+p.total+' 集'));card.appendChild(meta);const sub=node('div','subtitle-card-status',summaryLabel(work.SubtitleSummary));sub.title='正片任一版本有字幕即计入；画面内嵌需手动确认';card.appendChild(sub);return card;
 }

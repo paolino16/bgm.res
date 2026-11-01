@@ -85,3 +85,9 @@ body[data-background="off"] .page-header{background:none}
 .app-backdrop{overflow:hidden}
 .detail-backdrop-poster{position:absolute;inset:-32px;width:calc(100% + 64px);height:calc(100% + 64px);object-fit:cover;object-position:center 35%;filter:blur(26px);opacity:1}
 .app-backdrop:has(.detail-backdrop-poster)::after{content:'';position:absolute;inset:0;background:linear-gradient(100deg,#10161ded,#10161dc9 55%,#10161da6)}
+
+.poster-frame{position:relative}
+.poster-watched{position:absolute;top:8px;right:8px;z-index:1;padding:5px 8px;border:1px solid #ffffff38;border-radius:6px;background:#131d26ed;color:#e8ebee;font-size:11px;line-height:18px;box-shadow:0 2px 8px #0004}
+.poster-watched:hover{background:#2c443ded;border-color:var(--accent);color:var(--accent)}
+.poster-watched.complete{background:#193c30ed;color:#a6ebd0;border-color:#8cdbbf70}
+.poster-watched:disabled{opacity:.55}
