@@ -27,7 +27,7 @@ function create({ipc,node,button,notice,setHeader,container,isActive}){
     }finally{state.busy--;watching.delete(submitted.job_id);updateJobs();}
   }
   function guarded(fn){return async()=>{try{await fn();}catch(error){notice(error.message);}};}
-  function jobTitle(job){const names={'deepseek-plan':'DeepSeek 辅助映射','deepseek-history':'读取 AI 调用记录',recognize:'识别并生成方案',retry:'重新识别',plan:'读取方案',check:'检查文件方案',execute:'执行入库',config:'读取设置','save-config':'保存设置',layout:'预览目录迁移','save-task':'保存识别信息','add-subject':'载入关联条目','subtitle-preview':'匹配字幕','subtitle-execute':'导入字幕','cancel-review':'取消识别方案'};return names[job.action]||job.action;}
+  function jobTitle(job){const names={'deepseek-plan':'DeepSeek 辅助映射','deepseek-history':'读取 AI 调用记录','delete-task-preview':'预览删除范围','delete-task':'删除整理记录',recognize:'识别并生成方案',retry:'重新识别',plan:'读取方案',check:'检查文件方案',execute:'执行入库',config:'读取设置','save-config':'保存设置',layout:'预览目录迁移','save-task':'保存识别信息','add-subject':'载入关联条目','subtitle-preview':'匹配字幕','subtitle-execute':'导入字幕','cancel-review':'取消识别方案'};return names[job.action]||job.action;}
   function updateJobs(){if(!isActive())return;const host=container().querySelector('[data-jobs]');if(!host)return;host.replaceChildren();const active=[...state.jobs.values()].filter(j=>['queued','running'].includes(j.state));for(const job of active)host.appendChild(el('div','organizer-job',(job.state==='queued'?'等待执行 · ':'处理中 · ')+jobTitle(job)));}
   async function load(){const data=await ipc.invoke('library:organize');state.tasks=data.tasks;state.loaded=true;for(const job of data.jobs||[]){state.jobs.set(job.id,job);if(['queued','running'].includes(job.state)&&!watching.has(job.id))resume(job.id);}if(data.errors?.length)notice(data.errors.length+' 条损坏记录未载入');return data;}
   async function resume(id){
@@ -40,7 +40,7 @@ function create({ipc,node,button,notice,setHeader,container,isActive}){
     if(!isActive())return;
     setHeader('资源整理','添加来源、确认作品与章节，核对方案后入库。','LIBRARY / ORGANIZE');
     const host=container();host.replaceChildren();const tabs=controls();tabs.append(button('整理任务',()=>{state.screen='tasks';render();},'button '+(state.screen==='tasks'?'primary':'quiet')),button('整理设置',guarded(async()=>{const config=await action('config',{});state.config=config;state.screen='config';render();}),'button quiet'));host.appendChild(tabs);const jobs=el('div');jobs.dataset.jobs='';host.appendChild(jobs);updateJobs();
-    if(state.screen==='plan')renderPlan(host);else if(state.screen==='edit')renderEdit(host);else if(state.screen==='config')renderConfig(host);else renderTasks(host);
+    if(state.screen==='plan')renderPlan(host);else if(state.screen==='edit')renderEdit(host);else if(state.screen==='delete')renderDelete(host);else if(state.screen==='config')renderConfig(host);else renderTasks(host);
     if(!state.loaded){state.loaded=true;refresh().catch(error=>{state.loaded=false;notice(error.message);});}
   }
   function renderTasks(host){
@@ -60,9 +60,26 @@ function create({ipc,node,button,notice,setHeader,container,isActive}){
       if(task.error&&!['待审核','已取消'].includes(status(task))){const error=el('pre','organizer-error',task.error);card.appendChild(error);}
       const actions=controls();if(task.plan_state==='pending')actions.appendChild(button('审核文件方案',guarded(()=>openPlan(task)),'button primary small'));actions.appendChild(button('修改识别信息',()=>{state.selected=task;state.screen='edit';render();}));actions.appendChild(button('重新识别并预览',guarded(async()=>{await action('retry',{id:task.uuid});await load();const updated=state.tasks.find(t=>t.uuid===task.uuid);if(updated?.plan_state==='pending')await openPlan(updated);else{render();notice('已更新识别结果');}})));
       if(task.can_cancel_review)actions.appendChild(button('取消本次重新识别',guarded(async()=>{const result=await action('cancel-review',{id:task.uuid});await refresh();notice(result.message);}),'button quiet small'));else if(task.plan_state==='pending'&&!task.rollback_blocked)actions.appendChild(button('放弃此方案',guarded(async()=>{const result=await action('cancel-review',{id:task.uuid});await refresh();notice(result.message);}),'button quiet small'));
+      actions.appendChild(button('删除记录 / 关联文件',guarded(async()=>{if(state.busy)throw Error('请等待当前任务完成');state.selected=task;state.deletion=await action('delete-task-preview',{id:task.uuid,delete_outputs:false});state.screen='delete';render();}),'button danger small'));
       if(task.layout==='legacy'&&(task.subject_id||task.bgm_id))actions.appendChild(button('预览条目目录迁移',guarded(async()=>{const plan=await action('layout',{id:task.uuid});adoptPlan(task,plan);})));card.appendChild(actions);list.appendChild(card);
     }
     const prev=button('上一页',()=>{state.page--;renderTaskRows(list,pager);}),next=button('下一页',()=>{state.page++;renderTaskRows(list,pager);});prev.disabled=state.page===0;next.disabled=state.page>=pages-1;pager.append(el('span','',tasks.length+' 条 · '+(state.page+1)+' / '+pages+' 页'),prev,next);
+  }
+  function renderDelete(host){
+    const task=state.selected,preview=state.deletion;
+    host.appendChild(button('← 返回整理任务',back,'button quiet'));
+    const card=el('section','settings-card');card.append(el('h3','','删除 · '+preview.name),hint('源路径：'+(preview.source||'未记录')));
+    const removeOutputs=input('','checkbox');removeOutputs.checked=preview.delete_outputs;
+    removeOutputs.onchange=guarded(async()=>{host.inert=true;try{state.deletion=await action('delete-task-preview',{id:task.uuid,delete_outputs:removeOutputs.checked});render();}finally{host.inert=false;}});
+    card.append(label('同时将此任务关联的输出文件移入回收站',removeOutputs),hint('默认只移除任务、执行记录及待审核方案，保留输出文件。源文件、其他任务共用文件和目录会保留；删除前会备份记录。'),hint(preview.trash_count+' 个输出将回收 · '+preview.keep_count+' 个输出保留'));
+    const confirm=button(preview.delete_outputs?'确认删除记录并回收 '+preview.trash_count+' 个文件':'确认仅删除记录',guarded(async()=>{
+      if(state.busy)throw Error('请等待当前任务完成');host.inert=true;
+      try{const result=await action('delete-task',{id:task.uuid,token:preview.token,delete_outputs:preview.delete_outputs});state.selected=null;state.deletion=null;state.screen='tasks';await load();render();notice(result.message);}
+      finally{host.inert=false;}
+    }),'button danger');
+    const actions=controls();actions.append(button('取消',back,'button quiet'),button('刷新删除清单',guarded(async()=>{host.inert=true;try{state.deletion=await action('delete-task-preview',{id:task.uuid,delete_outputs:preview.delete_outputs});render();}finally{host.inert=false;}}),'button quiet'),confirm);card.appendChild(actions);host.appendChild(card);
+    const files=el('details','plan-companions');files.open=true;files.appendChild(el('summary','',preview.rows.length+' 个已登记输出的处理清单'));
+    const table=el('table','organizer-preview');for(const row of preview.rows){const tr=el('tr');tr.append(el('td','',row.path),el('td','',row.reason));table.appendChild(tr);}files.appendChild(table);host.appendChild(files);
   }
   function adoptPlan(task,plan){if(!plan||plan.state!=='pending')throw Error('没有可审核的方案，请先重新识别');state.selected=task;state.plan=plan;state.rows=JSON.parse(JSON.stringify(plan.draft_rows||plan.rows));state.checked=plan.review||null;state.dirty=!plan.review;state.rowPage=0;state.reviewQuery='';state.onlyAttention=false;state.expanded=new Set();state.screen='plan';render();}
   async function openPlan(task){const plan=await action('plan',{id:task.uuid});adoptPlan(task,plan);}

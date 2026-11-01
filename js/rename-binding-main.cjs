@@ -134,13 +134,23 @@ async function start({ipcMain,app,sysdata,Datastore}){
   }).then(result=>{scheduleMetadata();return result;})});
   ipcMain.handle('library:organize',()=>organizer.request('GET','tasks'));
   ipcMain.handle('organizer:action',(_event,{action,body})=>{
-    if(!['recognize','retry','save-task','plan','check','execute','add-subject','layout','config','save-config','subtitle-preview','subtitle-execute','cancel-review','deepseek-plan','deepseek-history'].includes(action))throw Error('不支持的整理操作');
+    if(!['recognize','retry','save-task','plan','check','execute','add-subject','layout','config','save-config','subtitle-preview','subtitle-execute','cancel-review','deepseek-plan','deepseek-history','delete-task-preview','delete-task'].includes(action))throw Error('不支持的整理操作');
     return organizer.action(action,body);
   });
   const refreshedJobs=new Set();
   ipcMain.handle('organizer:job',async(_event,id)=>{
     if(!/^[a-f0-9]{32}$/.test(id))throw Error('无效作业编号');
     const job=await organizer.request('GET','jobs/'+id);
+    if(job.state==='completed'&&job.action==='delete-task'&&!refreshedJobs.has(id)){
+      await transaction(async()=>{
+        for(const key of require('./task-library-cleanup.cjs').removedWorks(data,job.task_id)){
+          await new Promise((resolve,reject)=>db.remove({_id:key},{},error=>error?reject(error):resolve()));delete data[key];
+          if(data.LastWatched)data.LastWatched=data.LastWatched.filter(row=>row.workID!==key);
+        }
+        if(data.LastWatched)await save('LastWatched',data.LastWatched);
+      });
+      await organizer.onReturn();refreshedJobs.add(id);
+    }
     if(job.state==='completed'&&['execute','subtitle-execute'].includes(job.action)&&!refreshedJobs.has(id)){
       await organizer.onReturn();
       if(job.action==='subtitle-execute'){for(const work of Object.values(data))if(work?.RenameBinding?.files?.some(file=>file.taskId===job.task_id))await subtitles.scan(work);
