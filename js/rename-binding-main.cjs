@@ -50,6 +50,9 @@ async function start({ipcMain,app,sysdata,Datastore}){
     for(const window of require('electron').BrowserWindow.getAllWindows())if(!window.isDestroyed())window.webContents.send('subtitles:progress',progress);
   }});
   await subtitles.load();
+  const {probeMedia,findProbe}=require('./subtitle-index.cjs');
+  const durations=new (require('./media-duration.cjs').DurationIndex)({directory,probeFile:probeMedia,resolveTool:findProbe,sharedIndex:subtitles.index});await durations.load();
+  ipcMain.handle('media:duration',(_event,{id,path:target})=>{const work=getWork(id);const files=[...require('./subtitle-index.cjs').filesOf(work),...[...(work.RenameBinding?.files||[]),...(work.RenameBinding?.resources||[])].map(file=>file.path),...Object.values(work.SPDetails||{}).flatMap(slot=>(slot.Versions||[{path:slot.AbsolutePath||(slot.URL&&path.resolve(work.URL,slot.URL))}]).map(file=>file.path))].filter(Boolean);if(!files.some(file=>core.normalized(file)===core.normalized(target)))throw Error('只能读取已登记的视频');return durations.get(target);});
   const decorate=()=>subtitles.decorate(thumbnails.decorate(coreClone(data)));
   const getWork=id=>{if(!/^WorkSaveNo\d+$/.test(id)||!data[id])throw Error('番剧不存在');return data[id];};
   ipcMain.handle('library:read',decorate);

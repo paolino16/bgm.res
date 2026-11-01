@@ -9,16 +9,17 @@ async function findProbe(){
   try{const found=await run('where.exe',['ffprobe.exe'],3000);if(found.trim())return {file:found.trim().split(/\r?\n/)[0],kind:'ffprobe'};}catch{}
   const file=path.resolve(__dirname,'../mpv/ffmpeg.exe');await fs.access(file);return {file,kind:'ffmpeg'};
 }
-async function probe(file,tool){
+async function probeMedia(file,tool){
   if(tool.kind==='ffprobe'){
-    const json=JSON.parse(await run(tool.file,['-v','error','-show_entries','stream=index,codec_type,codec_name:stream_tags=language,title','-of','json','-i',file]));
+    const json=JSON.parse(await run(tool.file,['-v','error','-show_entries','format=duration:stream=index,codec_type,codec_name,duration:stream_tags=language,title','-of','json','-i',file]));
     if(!Array.isArray(json.streams)||!json.streams.some(s=>s.codec_type==='video'))throw Error('未识别到视频轨');
-    return json.streams.filter(s=>s.codec_type==='subtitle').map(s=>({codec:s.codec_name||'',language:s.tags?.language||'',title:s.tags?.title||''}));
+    return {durationSeconds:Number(json.format?.duration)>0?Number(json.format.duration):Math.max(0,...json.streams.map(s=>Number(s.duration)||0))||null,internal:json.streams.filter(s=>s.codec_type==='subtitle').map(s=>({codec:s.codec_name||'',language:s.tags?.language||'',title:s.tags?.title||''}))};
   }
   let text='';try{await run(tool.file,['-hide_banner','-nostdin','-i',file]);}catch(error){text=error.stderr||'';}
   if(!/Input #0,/.test(text)||!/Stream #0:\d+.*Video:/.test(text))throw Error('无法读取视频轨道信息');
-  return text.split(/\r?\n/).filter(line=>/Stream #0:\d+.*Subtitle:/.test(line)).map(line=>({codec:line.match(/Subtitle:\s*([^ ,]+)/)?.[1]||'',language:line.match(/Stream #0:\d+(?:\[[^\]]+\])?\(([^)]+)\)/)?.[1]||'',title:''}));
+  return {durationSeconds:require('./media-duration.cjs').parseDuration(text.match(/Duration:\s*([\d:.]+)/)?.[1]||''),internal:text.split(/\r?\n/).filter(line=>/Stream #0:\d+.*Subtitle:/.test(line)).map(line=>({codec:line.match(/Subtitle:\s*([^ ,]+)/)?.[1]||'',language:line.match(/Stream #0:\d+(?:\[[^\]]+\])?\(([^)]+)\)/)?.[1]||'',title:''}))};
 }
+async function probe(file,tool){return (await probeMedia(file,tool)).internal;}
 function filesOf(work){const files=new Map();for(const slot of Object.values(work.EPDetails||{}))for(const version of slot.Versions||[{path:slot.AbsolutePath||(slot.URL&&path.resolve(work.URL,slot.URL))}])if(version.path)files.set(normalized(version.path),version.path);return [...files.values()];}
 function describe(info){if(!info)return '未检测';if(info.state==='unavailable')return '文件离线 / 无法访问';const labels=[];if(info.external?.length)labels.push('外挂 '+info.external.length);if(info.internal?.length)labels.push('内封 '+info.internal.length);if(info.manual==='burned')labels.push('画面内嵌（手动确认）');if(labels.length)return labels.join(' · ');if(info.state==='unavailable')return '文件离线 / 无法访问';if(info.state==='error')return '轨道检测失败';if(info.manual==='none')return '已确认无字幕';return '未检测到字幕 · 画面内嵌待确认';}
 function positive(info){return Boolean(info&&info.state!=='unavailable'&&(info.external?.length||info.internal?.length||info.manual==='burned'));}
@@ -34,7 +35,7 @@ function summary(work,index){
 }
 function summaryLabel(s){if(!s?.total)return '暂无可检测章节';if(s.covered===s.total)return '全剧有字幕 · '+s.covered+'/'+s.total+' 集';if(s.covered)return '部分集有字幕 · '+s.covered+'/'+s.total+' 集';if(s.missing===s.total)return '已确认无字幕';if(s.unknown===s.total)return '字幕未检测 / 未知';return '未检测到字幕 · 待确认';}
 class SubtitleIndex{
-  constructor({directory,probeFile=probe,resolveTool=findProbe,onProgress=()=>{}}){this.filename=path.join(directory,'subtitle-index.json');this.index=new Map();this.probeFile=probeFile;this.resolveTool=resolveTool;this.onProgress=onProgress;this.pending=new Map();this.saveQueue=Promise.resolve();this.active=0;this.waiters=[];this.progress={running:false,done:0,total:0};}
+  constructor({directory,probeFile=probeMedia,resolveTool=findProbe,onProgress=()=>{}}){this.filename=path.join(directory,'subtitle-index.json');this.index=new Map();this.probeFile=probeFile;this.resolveTool=resolveTool;this.onProgress=onProgress;this.pending=new Map();this.saveQueue=Promise.resolve();this.active=0;this.waiters=[];this.progress={running:false,done:0,total:0};}
   async load(){try{const stored=JSON.parse(await fs.readFile(this.filename,'utf8'));if(stored.version===1)this.index=new Map(Object.entries(stored.files||{}));}catch{}}
   save(){const value=JSON.stringify({version:1,files:Object.fromEntries(this.index)},null,2);const next=this.saveQueue.then(async()=>{const tmp=this.filename+'.tmp';await fs.writeFile(tmp,value);await fs.rename(tmp,this.filename);});this.saveQueue=next.catch(()=>{});return next;}
   async limited(fn){if(this.active>=2)await new Promise(r=>this.waiters.push(r));this.active++;try{return await fn();}finally{this.active--;this.waiters.shift()?.();}}
@@ -51,12 +52,12 @@ class SubtitleIndex{
           for(const entry of entries){if((!entry.isFile()&&!entry.isSymbolicLink())||!extensions.has(path.extname(entry.name).toLowerCase()))continue;const stem=path.basename(entry.name,path.extname(entry.name)).toLocaleLowerCase();if(stem!==base&&!stem.startsWith(base+'.'))continue;if(videos.some(v=>v.length>base.length&&(stem===v||stem.startsWith(v+'.'))))continue;const target=path.join(folder,entry.name);if((await fs.stat(target)).size>0)external.push(target);}
         }catch(error){if(!['ENOENT','ENOTDIR'].includes(error.code))externalError=error.message;}
       }
-      let internal=unchanged?previous.internal:undefined,error,state='checked';
+      let internal=unchanged?previous.internal:undefined,durationSeconds=unchanged?previous.durationSeconds:undefined,error,state='checked';
       if(!internal||force||previous?.state==='error'){
-        try{const tool=await (this.toolPromise||(this.toolPromise=this.resolveTool()));internal=await this.probeFile(file,tool);}catch(exc){error=exc.message;state='error';}
+        try{const tool=await (this.toolPromise||(this.toolPromise=this.resolveTool()));const media=await this.probeFile(file,tool);internal=Array.isArray(media)?media:media.internal;durationSeconds=Array.isArray(media)?undefined:media.durationSeconds;}catch(exc){error=exc.message;state='error';}
       }
       if(externalError){state='error';error=externalError;}
-      const result={path:file,signature,external,internal:internal||[],state,error,manual:unchanged?previous.manual:undefined,checked_at:new Date().toISOString()};this.index.set(key,result);return result;
+      const result={path:file,signature,external,internal:internal||[],durationSeconds,state,error,manual:unchanged?previous.manual:undefined,checked_at:new Date().toISOString()};this.index.set(key,result);return result;
     }).finally(()=>this.pending.delete(key));this.pending.set(key,pending);return pending;
   }
   async scan(work,force=false){await Promise.all(filesOf(work).map(file=>this.inspect(file,force)));await this.save();return this.details(work);}
@@ -66,4 +67,4 @@ class SubtitleIndex{
   startAll(data){if(this.progress.running)return this.progress;const works=Object.values(data).filter(w=>w?.ExistCondition==='Exist');const files=[...new Set(works.flatMap(filesOf))];this.progress={running:true,done:0,total:files.length};
     (async()=>{try{let next=0;const worker=async()=>{while(next<files.length){const file=files[next++];await this.inspect(file);this.progress.done++;if(this.progress.done%25===0){await this.save();this.onProgress(this.progress);}}};await Promise.all([worker(),worker()]);await this.save();}catch(error){this.progress.error=error.message;}finally{this.progress.running=false;this.onProgress(this.progress);}})();return this.progress;}
 }
-module.exports={SubtitleIndex,filesOf,describe,positive,summary,summaryLabel,probe};
+module.exports={SubtitleIndex,filesOf,describe,positive,summary,summaryLabel,probe,probeMedia,findProbe};

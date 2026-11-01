@@ -93,3 +93,5 @@ body[data-background="off"] .page-header{background:none}
 .poster-watched:disabled{opacity:.55}
 
 .chapter-missing-note{color:#e5bc87;padding:12px 14px;border:1px solid #a878465f;border-radius:7px;background:#b88a4510}
+
+.chapter.with-duration .chapter-main{gap:4px}.chapter.with-duration .chapter-name{-webkit-line-clamp:1;min-height:16px;max-height:16px}.chapter-duration{font-size:10px;line-height:14px;color:#a9beb9;font-weight:400}.chapter:hover .chapter-duration,.chapter:focus-within .chapter-duration{visibility:hidden}

@@ -8,6 +8,7 @@ const {specialWatched,specialThrough,specialToggle}=require('./js/special-chapte
 const {loadCatalogue,specialChapters,regularChapters}=require('./js/episode-catalog.cjs');
 const {summaryLabel}=require('./js/subtitle-index.cjs');
 const {airDateLabel,compareAirDates}=require('./js/air-date.cjs');
+const {bangumiDuration,formatDuration}=require('./js/media-duration.cjs');
 const $=selector=>document.querySelector(selector);
 const appearance={background:localStorage.getItem('appearance-background')!=='off',glass:localStorage.getItem('appearance-glass')!=='off'};
 function applyAppearance(){
@@ -135,10 +136,11 @@ function renderChapters(panel,work){
   mark.disabled=!slots(work).length;mark.title='将已登记的本地正片标为看过';heading.append(node('h3','','正片章节'),mark);panel.appendChild(heading);
   const note=node('p','inline-note',work.bgmID?'正在核对 Bangumi 正片目录…':'尚未绑定 Bangumi 条目，无法核对缺集。');panel.appendChild(note);
   const grid=node('div','chapter-grid');panel.appendChild(grid);
-  function localCard(key,slot,title){
+  function localCard(key,slot,title,episode,resolveDuration=false){
     const watched=slot.Condition==='Watched';
     const tile=chapterCard({label:'EP '+(slot.EpisodeNumber||slot.LocalIndex),title:title||episodeNames.get(String(slot.EpisodeID))||(slot.Versions?.length||1)+' 个本地文件 · '+(watched?'已看':'未看'),
       status:watched?'✓':'',watched,selected:state.selected===key,
+      durationEpisode:episode,durationFile:resolveDuration||!work.bgmID?episodePath(work,slot):null,work,
       onSelect:()=>{state.selected=key;for(const selected of panel.querySelectorAll('.chapter.selected'))selected.classList.remove('selected');tile.classList.add('selected');renderSelection(panel,work,key);panel.querySelector('.file-panel')?.scrollIntoView({block:'nearest'});},
       actions:chapterActions(work,key,'chapter-actions')});return tile;
   }
@@ -159,18 +161,18 @@ function renderChapters(panel,work){
     for(const episode of report.rows){
       const key=episode.slotKeys[0],title=episode.name_cn||episode.name||'未命名章节';episodeNames.set(String(episode.id),title);
       const selectedTitle=panel.querySelector('.selected-chapter-title');if(selectedTitle?.dataset.episodeId===String(episode.id))selectedTitle.textContent=title;
-      if(key&&episode.state==='mapped'){const tile=localCard(key,work.EPDetails[key],title);grid.appendChild(tile);continue;}
+      if(key&&episode.state==='mapped'){const tile=localCard(key,work.EPDetails[key],title,episode,true);grid.appendChild(tile);continue;}
       const status={unmapped:'未映射',unavailable:'不可用',upcoming:'未播出',mapped:'已映射'}[episode.state];
       const actions=episodeActions({file:episode.usable[0]?.path,link:'https://bgm.tv/ep/'+episode.id,watched:false,onToggle:()=>{},onThrough:()=>{},throughTitle:'绑定本地正片后可更新观看进度'},'chapter-actions');
       actions.children[2].disabled=true;actions.children[3].disabled=true;
       const tile=chapterCard({label:'EP '+(episode.sort??episode.ep),title,status,warning:episode.state==='unmapped'||episode.state==='unavailable',
-        selected:state.selected==='catalog:'+episode.id,onSelect:()=>{state.selected='catalog:'+episode.id;panel.querySelector('.file-panel')?.remove();const box=episodeFilePanel({heading:'EP '+(episode.sort??episode.ep)+' · 本地文件',title,episodeId:episode.id,actions:node('div'),files:episode.files.map(file=>({path:file.path,description:file.availability&&file.availability!=='available'?'已映射，文件状态：'+file.availability:'已映射本地文件'})),emptyMessage:episode.state==='upcoming'?'此章节尚未播出。':'未映射本地文件；请检查是否缺集，或在资源整理中核对章节绑定。',work});panel.insertBefore(box,grid);box.scrollIntoView({block:'nearest'});},actions});
+        durationEpisode:episode,durationFile:episode.usable[0]?.path,work,selected:state.selected==='catalog:'+episode.id,onSelect:()=>{state.selected='catalog:'+episode.id;panel.querySelector('.file-panel')?.remove();const box=episodeFilePanel({heading:'EP '+(episode.sort??episode.ep)+' · 本地文件',title,episodeId:episode.id,actions:node('div'),files:episode.files.map(file=>({path:file.path,description:file.availability&&file.availability!=='available'?'已映射，文件状态：'+file.availability:'已映射本地文件'})),emptyMessage:episode.state==='upcoming'?'此章节尚未播出。':'未映射本地文件；请检查是否缺集，或在资源整理中核对章节绑定。',work});panel.insertBefore(box,grid);box.scrollIntoView({block:'nearest'});},actions});
       tile.title=title+'\n'+status+(episode.airdate?'\n'+episode.airdate:'');grid.appendChild(tile);
     }
-    if(report.unmatchedSlots.length){panel.appendChild(node('p','inline-note','以下 '+report.unmatchedSlots.length+' 个本地章节未匹配目录，保留原有操作；请核对章节绑定。'));const extra=node('div','chapter-grid');for(const [key,slot]of report.unmatchedSlots)extra.appendChild(localCard(key,slot));panel.appendChild(extra);}
+    if(report.unmatchedSlots.length){panel.appendChild(node('p','inline-note','以下 '+report.unmatchedSlots.length+' 个本地章节未匹配目录，保留原有操作；请核对章节绑定。'));const extra=node('div','chapter-grid');for(const [key,slot]of report.unmatchedSlots)extra.appendChild(localCard(key,slot,'',null,true));panel.appendChild(extra);}
     if(!report.rows.length)note.textContent='Bangumi 暂无正片章节目录，无法据此确认是否缺集。本地未绑定章节保留在下方。';
     $('#content').scrollTop=scroll;
-  }).catch(error=>{if(token!==state.token||!grid.isConnected)return;note.textContent='正片目录加载失败，暂时无法核对缺集：'+error.message;panel.appendChild(button('重试核对',()=>{panel.replaceChildren();renderChapters(panel,work);},'button quiet'));});
+  }).catch(error=>{if(token!==state.token||!grid.isConnected)return;note.textContent='正片目录加载失败，暂时无法核对缺集：'+error.message;grid.replaceChildren(...slots(work).map(([key,slot])=>localCard(key,slot,'',null,true)));panel.appendChild(button('重试核对',()=>{panel.replaceChildren();renderChapters(panel,work);},'button quiet'));});
 }
 
 function renderSpecialChapters(panel,work){
@@ -190,7 +192,7 @@ function renderSpecialChapters(panel,work){
         for(const episode of group.rows){
           const selected=String(state.specialEpisodeId)===String(episode.id),watched=specialWatched(work,episode.id);
           const title=episode.name_cn||episode.name||'未命名章节';
-          const tile=chapterCard({label:group.code+' '+(episode.sort??episode.ep??''),title,watched,selected,
+          const tile=chapterCard({label:group.code+' '+(episode.sort??episode.ep??''),title,watched,selected,durationEpisode:episode,durationFile:episode.usable[0]?.path,work,
             status:episode.state==='unmapped'?'未映射':episode.state==='unavailable'?'不可用':watched?'✓':episode.files.length+' 文件',
             warning:episode.state!=='mapped',onSelect:()=>{state.specialEpisodeId=selected?null:episode.id;draw();},
             actions:specialActions(work,group,episode,'chapter-actions')});
@@ -208,10 +210,17 @@ function renderSpecialChapters(panel,work){
     draw();
   }).catch(error=>{if(token!==state.token||!panel.isConnected)return;panel.replaceChildren();empty(panel,'特别章节目录加载失败',error.message);panel.appendChild(button('重试',()=>renderSpecialChapters(panel,work),'button quiet'));});
 }
-function chapterCard({label,title,status='',watched=false,selected=false,warning=false,onSelect,actions}){
+function chapterCard({label,title,status='',watched=false,selected=false,warning=false,onSelect,actions,durationEpisode,durationFile,work}){
   const tile=node('article','chapter'+(watched?' watched':'')+(selected?' selected':'')+(warning?' mapping-warning':''));
   const main=button('',onSelect,'chapter-main');main.setAttribute('aria-label',label+' 章节文件');
-  const top=node('div','chapter-top');top.append(node('span','',label),node('span','chapter-state',status));main.append(top,node('div','chapter-name',title));tile.append(main,actions);return tile;
+  const top=node('div','chapter-top');top.append(node('span','',label),node('span','chapter-state',status));main.append(top,node('div','chapter-name',title));tile.append(main,actions);
+  const duration=bangumiDuration(durationEpisode);
+  if(duration||durationFile){
+    tile.classList.add('with-duration');const line=node('small','chapter-duration',duration?'BGM '+formatDuration(duration):'时长读取中…');main.appendChild(line);
+    line.title=duration?'Bangumi 标注时长，可能与本地版本不同':'当前播放版本的视频时长';
+    if(!duration&&durationFile&&work)ipc.invoke('media:duration',{id:work.id,path:durationFile}).then(seconds=>{if(line.isConnected)line.textContent=seconds?'本地 '+formatDuration(seconds):'时长未知';}).catch(()=>{if(line.isConnected)line.textContent='时长未知';});
+  }
+  return tile;
 }
 function episodeActions({file,link,watched,onToggle,onThrough,throughTitle},cls){
   const actions=node('div',cls),play=button('▶ 播放',()=>openFile(file),'chapter-action play');play.disabled=!file;play.title=file?'使用系统播放器打开本集':'未映射可用的本地文件';
