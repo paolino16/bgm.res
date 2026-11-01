@@ -153,15 +153,6 @@ async function start({ipcMain,app,sysdata,Datastore}){
     const result=await dialog.showOpenDialog(owner,options);return result.canceled?[]:result.filePaths;
   });
   ipcMain.handle('library:storage',()=>({directory,renameData:integration.dataPath(directory)}));
-  let legacyWindow;
-  ipcMain.handle('library:legacy',()=>{
-    if(legacyWindow&&!legacyWindow.isDestroyed()){legacyWindow.show();legacyWindow.focus();return;}
-    const {BrowserWindow}=require('electron');
-    const window=new BrowserWindow({width:1360,height:900,autoHideMenuBar:true,title:'bgm.res · 原版工具',webPreferences:{nodeIntegration:true,contextIsolation:false,webviewTag:true}});
-    legacyWindow=window;
-    require('@electron/remote/main').enable(window.webContents);
-    window.loadFile(path.join(__dirname,'..','index.html'));
-  });
   ipcMain.on('library:write',(event,{key,value})=>{
     const resolved=core.resolveKey(data,key),parts=resolved.split('.'),top=parts.shift();
     if(!parts.length)data[top]=value;else{if(!data[top])data[top]={WorkSaveNo:top};core.setDeep(data[top],parts,value);}

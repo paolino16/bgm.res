@@ -111,7 +111,6 @@ function createWindow () {
       })
       // win.webContents.openDevTools();
     }
-    if(process.argv[1] == "--add-media"){AddMediaPageShow();} //?判断是否为快速任务启动
 
     win.on('closed', function() {
       app.quit();});
@@ -126,23 +125,23 @@ var trayMenuTemplate = [
       type: 'separator'
     }, //分隔线
     {
-      label: '首页（最近播放）',
-      click: function () {win.show();win.webContents.send('MainWindow','OpenMainPage');} //打开相应页面
+      label: '正在观看',
+      click: function () {win.show();win.webContents.send('MainWindow','OpenWatchingPage');} //打开相应页面
     },
     {
       label: '媒体库',
       click: function () {win.show();win.webContents.send('MainWindow','OpenMediaPage');} //打开相应页面
     },
     {
-      label: '做种管理',
-      click: function () {win.show();win.webContents.send('MainWindow','OpenTorrnetPage');} //打开相应页面
+      label: '资源整理',
+      click: function () {win.show();win.webContents.send('MainWindow','OpenOrganizerPage');} //打开相应页面
     },
     {
       label: '设置',
       submenu: [
         {
-          label: '检查更新',
-          click: function () {shell.openExternal("http://studio.zerolite.cn")} //打开相应页面
+          label: '偏好设置',
+          click: function () {win.show();win.webContents.send('MainWindow','OpenSettingsPage');} //打开相应页面
         },
         {
           label: '开启总在最上',
@@ -580,16 +579,7 @@ app.on('activate', () => {
 
 //设置任务栏快速任务
 function SetDockerTasks(){
-  app.setUserTasks([
-    {
-      program: process.execPath,
-      arguments: '--add-media',
-      iconPath: path.join(__dirname, './assets/icons/app.ico'),
-      iconIndex: 0,
-      title: '添加作品',
-      description: '快捷添加新作品到媒体库'
-    }
-  ])
+  app.setUserTasks([]);
 }
 //注意，快速任务在acrylic window下单独配置
 // 您可以把应用程序其他的流程写在在此文件中

@@ -221,7 +221,7 @@ function renderIssues(){
   for(const work of all){const section=node('section','issue-work');section.appendChild(button(work.Name,()=>{openDetail(work.id);state.tab='invalid';renderDetail();},'button quiet issue-work-title'));renderInvalid(section,work);content.appendChild(section);}
 }
 function renderSettings(){setHeader('偏好设置','简化浏览，保留你的管理习惯。','PREFERENCES');const content=$('#content');content.replaceChildren();const display=node('section','settings-card');display.appendChild(node('h3','','媒体库显示'));const row=node('div','settings-row');row.append(node('span','','默认浏览方式'));const modes=node('div','form-actions');for(const [id,label]of [['grid','海报视图'],['list','列表视图']])modes.appendChild(button(label,()=>{state.mode=id;localStorage.setItem('library-view',id);renderSettings();},'button '+(state.mode===id?'primary':'quiet')));row.appendChild(modes);display.appendChild(row);content.appendChild(display);
-  const tools=node('section','settings-card');tools.append(node('h3','','管理工具'),node('p','','通过侧栏“资源整理”添加任务、审核方案与执行入库，整理完成后自动更新媒体库。'),button('打开原版更多工具 ↗',()=>ipc.invoke('library:legacy')));tools.appendChild(node('p','','原有账号、同步、下载管理与高级设置功能可从原版工具继续使用。'));content.appendChild(tools);
+  const tools=node('section','settings-card');tools.append(node('h3','','资源整理'),node('p','','添加来源、审核方案、执行入库与整理设置集中在资源整理页面。'),button('打开资源整理',()=>activate('organizer'),'button quiet'));content.appendChild(tools);
   const storage=node('section','settings-card');storage.appendChild(node('h3','','数据存储'));content.appendChild(storage);ipc.invoke('library:storage').then(info=>{if(storage.isConnected){storage.append(node('p','','管理数据：'+info.directory),node('p','','整理记录：'+info.renameData));}}).catch(error=>notice(error.message));
   const health=node('section','settings-card');health.append(node('h3','','文件状态'),node('p','',works().reduce((n,w)=>n+invalid(w).length,0)+' 个异常文件已从有效列表排除；原文件保留。'),button('查看异常文件',()=>activate('issues'),'button quiet'));content.appendChild(health);
 }
@@ -230,7 +230,6 @@ $('#library-back').onclick=returnToLibrary;
 function jumpContent(bottom){smoothScroller.cancel();const viewport=$('#content');viewport.scrollTo({top:bottom?Math.max(0,viewport.scrollHeight-viewport.clientHeight):0,behavior:window.matchMedia('(prefers-reduced-motion: reduce)').matches?'auto':'smooth'});}
 $('#scroll-top').onclick=()=>jumpContent(false);
 $('#scroll-bottom').onclick=()=>jumpContent(true);
-$('#legacy').onclick=()=>ipc.invoke('library:legacy').catch(error=>notice(error.message));
 let searchTimer;$('#search').oninput=event=>{state.query=event.target.value;clearTimeout(searchTimer);searchTimer=setTimeout(renderLibrary,120);};
 $('#media-type').onchange=event=>{state.type=event.target.value;renderLibrary();};
 $('#subtitle-filter').onchange=event=>{state.subtitle=event.target.value;renderLibrary();};
@@ -242,7 +241,7 @@ for(const mode of ['grid','list'])$('#'+mode+'-view').onclick=()=>{state.mode=mo
 $('#refresh').onclick=async()=>{const control=$('#refresh');control.disabled=true;control.textContent='检查文件中…';try{if(state.view==='organizer'){await organizerUI.refresh();return;}const result=await ipc.invoke('library:recheck');adopt(result.data);apiCache.clear();catalogueCache.clear();state.token++;render();notice('已检查 '+result.report.checked+' 个文件'+(result.report.removed?'，清理 '+result.report.removed+' 条已删除的异常记录':'，文件状态已更新'));}catch(error){notice('刷新失败：'+error.message);}finally{control.disabled=false;control.textContent='↻ 刷新';}};
 document.addEventListener('keydown',event=>{if(event.ctrlKey&&event.key.toLowerCase()==='k'){event.preventDefault();if(!['library','watching'].includes(state.view))activate('library');$('#search').focus();}if(event.key==='Escape'&&state.view==='detail'&&!['INPUT','TEXTAREA'].includes(document.activeElement.tagName))returnToLibrary();});
 ipc.on('library:updated',async()=>{await read();if(state.view==='detail')renderDetail();else if(state.view!=='organizer')render();});
-ipc.on('MainWindow',(_event,action)=>{if(action==='OpenMediaPage'||action==='OpenMainPage')activate('library');});
+ipc.on('MainWindow',(_event,action)=>{const view={OpenMediaPage:'library',OpenMainPage:'library',OpenWatchingPage:'watching',OpenOrganizerPage:'organizer',OpenSettingsPage:'settings'}[action];if(view)activate(view);});
 ipc.invoke('subtitles:progress').then(progress=>{if(progress.running)showSubtitleProgress(progress);}).catch(()=>{});
 read().then(render).catch(error=>{empty($('#content'),'无法读取媒体库',error.message);});
 require('./js/desktop-performance.cjs').install({document,window});
