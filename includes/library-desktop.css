@@ -80,3 +80,8 @@ body[data-glass="off"] .sidebar{background:#171e26f2}
 body[data-background="off"] .page-header{background:none}
 .appearance-toggle{width:18px;height:18px;accent-color:var(--accent);cursor:pointer}
 @media(prefers-reduced-transparency:reduce){body[data-glass="on"] .sidebar,body[data-glass="on"] .scroll-floats{backdrop-filter:none}.sidebar{background:#171e26f2}}
+
+/* Detail artwork is independent from the scroll surface and foreground cover. */
+.app-backdrop{overflow:hidden}
+.detail-backdrop-poster{position:absolute;inset:-32px;width:calc(100% + 64px);height:calc(100% + 64px);object-fit:cover;object-position:center 35%;filter:blur(26px);opacity:1}
+.app-backdrop:has(.detail-backdrop-poster)::after{content:'';position:absolute;inset:0;background:linear-gradient(100deg,#10161ded,#10161dc9 55%,#10161da6)}
