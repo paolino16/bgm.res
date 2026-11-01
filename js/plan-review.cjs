@@ -13,6 +13,7 @@ function reviewRows(plan,rows,review){
   for(const item of files){
     item.preview=preview.get(item.key);
     if(!item.row.skip&&!item.preview?.target&&!item.reasons.length)item.reasons.push('尚未生成目标映射');
+    if(item.row.ai&&item.row.ai.confidence!=='High'&&!item.row.manual_mapping)item.reasons.push('AI '+item.row.ai.confidence+' 置信度：'+item.row.ai.reason);
     item.attention=!item.row.skip&&item.reasons.length>0;
     item.target=item.preview?.target||'';item.targetLabel=item.preview?.target_label||'待确认目标';
     item.status=item.row.skip?'跳过':item.attention?'需核对':item.preview?.action==='同源跳过'?'同源保留':'正常';

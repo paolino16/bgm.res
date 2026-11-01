@@ -131,7 +131,7 @@ async function start({ipcMain,app,sysdata,Datastore}){
   }).then(result=>{scheduleMetadata();return result;})});
   ipcMain.handle('library:organize',()=>organizer.request('GET','tasks'));
   ipcMain.handle('organizer:action',(_event,{action,body})=>{
-    if(!['recognize','retry','save-task','plan','check','execute','add-subject','layout','config','save-config','subtitle-preview','subtitle-execute','cancel-review'].includes(action))throw Error('不支持的整理操作');
+    if(!['recognize','retry','save-task','plan','check','execute','add-subject','layout','config','save-config','subtitle-preview','subtitle-execute','cancel-review','deepseek-plan','deepseek-history'].includes(action))throw Error('不支持的整理操作');
     return organizer.action(action,body);
   });
   const refreshedJobs=new Set();
