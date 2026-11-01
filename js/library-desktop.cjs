@@ -9,6 +9,12 @@ const {loadCatalogue,specialChapters}=require('./js/episode-catalog.cjs');
 const {summaryLabel}=require('./js/subtitle-index.cjs');
 const {airDateLabel,compareAirDates}=require('./js/air-date.cjs');
 const $=selector=>document.querySelector(selector);
+const appearance={background:localStorage.getItem('appearance-background')!=='off',glass:localStorage.getItem('appearance-glass')!=='off'};
+function applyAppearance(){
+  document.body.dataset.background=appearance.background?'on':'off';
+  document.body.dataset.glass=appearance.glass?'on':'off';
+}
+applyAppearance();
 const smoothScroller=require('./js/smooth-scroll.cjs').install({element:$('#content'),window});
 const imageObserver=new IntersectionObserver(entries=>{
   for(const {target,isIntersecting}of entries){
@@ -223,6 +229,15 @@ function renderIssues(){
   for(const work of all){const section=node('section','issue-work');section.appendChild(button(work.Name,()=>{openDetail(work.id);state.tab='invalid';renderDetail();},'button quiet issue-work-title'));renderInvalid(section,work);content.appendChild(section);}
 }
 function renderSettings(){setHeader('偏好设置','简化浏览，保留你的管理习惯。','PREFERENCES');const content=$('#content');content.replaceChildren();const display=node('section','settings-card');display.appendChild(node('h3','','媒体库显示'));const row=node('div','settings-row');row.append(node('span','','默认浏览方式'));const modes=node('div','form-actions');for(const [id,label]of [['grid','海报视图'],['list','列表视图']])modes.appendChild(button(label,()=>{state.mode=id;localStorage.setItem('library-view',id);renderSettings();},'button '+(state.mode===id?'primary':'quiet')));row.appendChild(modes);display.appendChild(row);content.appendChild(display);
+  const appearanceCard=node('section','settings-card');
+  appearanceCard.append(node('h3','','外观'),node('p','','淡化背景搭配深色面板；毛玻璃用于侧栏和悬浮按钮。设置自动保存。'));
+  for(const [key,label] of [['background','背景图片'],['glass','毛玻璃效果']]){
+    const row=node('label','settings-row'),toggle=node('input','appearance-toggle');
+    toggle.type='checkbox';toggle.checked=appearance[key];
+    toggle.onchange=()=>{appearance[key]=toggle.checked;localStorage.setItem('appearance-'+key,toggle.checked?'on':'off');applyAppearance();};
+    row.append(node('span','',label),toggle);appearanceCard.appendChild(row);
+  }
+  content.appendChild(appearanceCard);
   const tools=node('section','settings-card');tools.append(node('h3','','资源整理'),node('p','','添加来源、审核方案、执行入库与整理设置集中在资源整理页面。'),button('打开资源整理',()=>activate('organizer'),'button quiet'));content.appendChild(tools);
   const storage=node('section','settings-card');storage.appendChild(node('h3','','数据存储'));content.appendChild(storage);ipc.invoke('library:storage').then(info=>{if(storage.isConnected){storage.append(node('p','','管理数据：'+info.directory),node('p','','整理记录：'+info.renameData));}}).catch(error=>notice(error.message));
   const health=node('section','settings-card');health.append(node('h3','','文件状态'),node('p','',works().reduce((n,w)=>n+invalid(w).length,0)+' 个异常文件已从有效列表排除；原文件保留。'),button('查看异常文件',()=>activate('issues'),'button quiet'));content.appendChild(health);
