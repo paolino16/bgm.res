@@ -1,3 +1,4 @@
+const RenameBindingBridge = require('../rename-binding-renderer.cjs');
 /**
  * @name MainpageArchiveDetailsSelectandPlay.js
  * @module MainpageArchiveDetailsSelectandPlay.js
@@ -98,9 +99,9 @@ exports.ArchiveMediaDetailsEpInfoCard=function(event,MediaID,TempCounter,Type){
 //! 媒体库-作品详情页章节选择并播放
 exports.ArchiveMediaDetailsEpInfoPlayer=function(MediaID,TempCounter,Type){
   console.log(MediaID,TempCounter,Type)
-  if(((store.get("WorkSaveNo"+MediaID+".URL")+"\\"+store.get("WorkSaveNo"+MediaID+".EPDetails.EP"+TempCounter+".URL"))&&Type=='EP')||((store.get("WorkSaveNo"+MediaID+".URL")+"\\"+store.get("WorkSaveNo"+MediaID+".SPDetails.SP"+TempCounter+".URL"))&&Type=='SP')){
-    if(Type == 'EP') var EPOpenURL = store.get("WorkSaveNo"+MediaID+".URL")+"\\"+store.get("WorkSaveNo"+MediaID+".EPDetails.EP"+TempCounter+".URL");
-    if(Type == 'SP') var EPOpenURL = store.get("WorkSaveNo"+MediaID+".URL")+"\\"+store.get("WorkSaveNo"+MediaID+".SPDetails.SP"+TempCounter+".URL");
+  if(((RenameBindingBridge.resolveMediaPath(store.get("WorkSaveNo"+MediaID+".URL"),store.get("WorkSaveNo"+MediaID+".EPDetails.EP"+TempCounter+".URL")))&&Type=='EP')||((RenameBindingBridge.resolveMediaPath(store.get("WorkSaveNo"+MediaID+".URL"),store.get("WorkSaveNo"+MediaID+".SPDetails.SP"+TempCounter+".URL")))&&Type=='SP')){
+    if(Type == 'EP') var EPOpenURL = RenameBindingBridge.resolveMediaPath(store.get("WorkSaveNo"+MediaID+".URL"),store.get("WorkSaveNo"+MediaID+".EPDetails.EP"+TempCounter+".URL"));
+    if(Type == 'SP') var EPOpenURL = RenameBindingBridge.resolveMediaPath(store.get("WorkSaveNo"+MediaID+".URL"),store.get("WorkSaveNo"+MediaID+".SPDetails.SP"+TempCounter+".URL"));
 
     //更新最近观看
     store.recordLastWatched(store.get("WorkSaveNo"+MediaID+".WorkSaveNo"),Type+(TempCounter).toString());
@@ -170,15 +171,15 @@ exports.ArchiveMediaDetailsEpInfoPlayer=function(MediaID,TempCounter,Type){
     sysdata.set("Settings.checkboxC.LocalStorageRecentViewEpisode",TempCounter);
     localStorage.setItem("LocalStorageRecentViewEpisode",TempCounter);
     if(Type == 'EP') {
-      sysdata.set("Settings.checkboxC.LocalStorageRecentViewNextURL",store.find(RecentViewWorkOriNo+".URL")+"\\"+store.find(RecentViewWorkOriNo+".EPDetails.EP"+(TempCounter+1)+".URL"));
-      localStorage.setItem("LocalStorageRecentViewNextURL",store.find(RecentViewWorkOriNo+".URL")+"\\"+store.find(RecentViewWorkOriNo+".EPDetails.EP"+(TempCounter+1)+".URL"));
+      sysdata.set("Settings.checkboxC.LocalStorageRecentViewNextURL",RenameBindingBridge.resolveMediaPath(store.find(RecentViewWorkOriNo+".URL"),store.find(RecentViewWorkOriNo+".EPDetails.EP"+(TempCounter+1)+".URL")));
+      localStorage.setItem("LocalStorageRecentViewNextURL",RenameBindingBridge.resolveMediaPath(store.find(RecentViewWorkOriNo+".URL"),store.find(RecentViewWorkOriNo+".EPDetails.EP"+(TempCounter+1)+".URL")));
       sysdata.set("Settings.checkboxC.LocalStorageRecentViewEpisodeType",'EP');localStorage.setItem("LocalStorageRecentViewEpisodeType",'EP');
       document.getElementById("ArchivePageContentDetailsEpisodeNo"+TempCounter).style.boxShadow="0px 0px 0px 2px "+SettingsColorPicker(0.4);
       document.getElementById("ArchivePageContentDetailsEpisodeNo"+TempCounter).style.backgroundColor=SettingsColorPicker(0.4);
     }
     if(Type == 'SP') {
-      sysdata.set("Settings.checkboxC.LocalStorageRecentViewNextURL",store.find(RecentViewWorkOriNo+".URL")+"\\"+store.find(RecentViewWorkOriNo+".SPDetails.SP"+(TempCounter+1)+".URL"));
-      localStorage.setItem("LocalStorageRecentViewNextURL",store.find(RecentViewWorkOriNo+".URL")+"\\"+store.find(RecentViewWorkOriNo+".SPDetails.SP"+(TempCounter+1)+".URL"));
+      sysdata.set("Settings.checkboxC.LocalStorageRecentViewNextURL",RenameBindingBridge.resolveMediaPath(store.find(RecentViewWorkOriNo+".URL"),store.find(RecentViewWorkOriNo+".SPDetails.SP"+(TempCounter+1)+".URL")));
+      localStorage.setItem("LocalStorageRecentViewNextURL",RenameBindingBridge.resolveMediaPath(store.find(RecentViewWorkOriNo+".URL"),store.find(RecentViewWorkOriNo+".SPDetails.SP"+(TempCounter+1)+".URL")));
       sysdata.set("Settings.checkboxC.LocalStorageRecentViewEpisodeType",'SP');localStorage.setItem("LocalStorageRecentViewEpisodeType",'SP');
       document.getElementById("ArchivePageContentDetailsSpecialEpisodeNo"+TempCounter).style.boxShadow="0px 0px 0px 2px "+SettingsColorPicker(0.4);
       document.getElementById("ArchivePageContentDetailsSpecialEpisodeNo"+TempCounter).style.backgroundColor=SettingsColorPicker(0.4);

@@ -3,3 +3,8 @@ dist/
 mpv/
 desktop.ini
 package-lock.json
+.desktop/
+启动收藏管理.cmd
+
+.linked-desktop/
+启动原版绑定.cmd

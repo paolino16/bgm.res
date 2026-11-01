@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>bgm.res · 本地番剧</title><link rel="stylesheet" href="includes/library-desktop.css"></head>
+<body>
+  <div class="window-bar"><span class="window-brand">bgm<span>res</span></span><span>本地番剧管理</span></div>
+  <aside class="sidebar">
+    <div class="brand"><span class="brand-icon">◫</span><div>我的番剧库<small>LOCAL COLLECTION</small></div></div>
+    <nav aria-label="主导航"><button id="organize" data-nav="organizer" class="nav-item"><span>⇄</span>资源整理</button><button data-nav="library" class="nav-item active"><span>▦</span>媒体库<b id="library-count"></b></button><button data-nav="watching" class="nav-item"><span>◷</span>正在观看</button><button data-nav="issues" class="nav-item"><span>◇</span>异常文件<b id="issue-count"></b></button></nav>
+    <div class="sidebar-bottom"><button data-nav="settings" class="nav-item"><span>⚙</span>偏好设置</button><button id="legacy" class="nav-item"><span>↗</span>原版更多工具</button><div class="sidebar-note"><i></i> 本地文件 · 重命名产物已绑定</div></div>
+  </aside>
+  <main>
+    <header class="page-header"><div class="header-title-group"><button id="library-back" class="button quiet small" title="返回媒体库">← 返回媒体库</button><div class="page-heading"><span id="breadcrumb" class="eyebrow">COLLECTION</span><h1 id="page-title">媒体库</h1><p id="page-subtitle"></p></div></div><div class="header-actions"><button id="scan-subtitles" class="button quiet">检测全库字幕</button><button id="refresh" class="button quiet">↻ 刷新</button></div></header>
+    <div id="toolbar" class="toolbar"><label class="search"><span>⌕</span><input id="search" placeholder="搜索番剧名称…" aria-label="搜索番剧名称"><kbd>Ctrl K</kbd></label><select id="media-type" aria-label="作品类型"><option value="">全部类型</option></select><select id="year" aria-label="年份"><option value="">全部年份</option></select><select id="subtitle-filter" aria-label="字幕状态"><option value="">全部字幕状态</option><option value="complete">全剧有字幕</option><option value="partial">部分集有字幕</option><option value="missing">已确认无字幕</option><option value="unconfirmed">未检测到 · 待确认</option><option value="unknown">未检测 / 未知</option></select><select id="sort" aria-label="排序"><option value="name">名称排序</option><option value="year">开播时间（新→旧）</option><option value="score">评分最高</option><option value="progress">观看进度</option></select><div class="view-switch" aria-label="显示方式"><button id="grid-view" title="海报视图" aria-label="海报视图">▦</button><button id="list-view" title="列表视图" aria-label="列表视图">☰</button></div></div>
+    <div id="filters" class="filter-bar"></div>
+    <div id="notice" class="notice" role="status" hidden></div>
+    <div id="content" class="content" tabindex="-1"><div class="empty-state">正在读取本地媒体库…</div></div>
+  </main>
+  <nav class="scroll-floats" aria-label="页面滚动"><button id="scroll-top" class="scroll-float" title="一键回顶部" aria-label="一键回顶部">↑</button><button id="scroll-bottom" class="scroll-float" title="一键到底部" aria-label="一键到底部">↓</button></nav>
+  <script src="js/library-desktop.cjs"></script>
+</body></html>

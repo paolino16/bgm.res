@@ -19,7 +19,7 @@ const db = new Datastore({
     filename: path.join(path.join(appDataPath, 'bgm.res'), 'MediaData.db'),
     autoload: false
 });
-const ElectronStoreAdapter = nodeRequire('../js/ElectronStore2NeDB.js');
+const ElectronStoreAdapter = nodeRequire('../js/legacy-store-adapter.cjs');
 const store = new ElectronStoreAdapter();  // 创建自定义适配器实例
 //! NeDB数据库初始化OVER
 
@@ -302,6 +302,7 @@ function naturalSort(a, b) {
 
 //! 作品ep扫描模块
 function LocalWorkEpsScanModule(MediaID){
+    if (store.get("WorkSaveNo"+MediaID+".RenameBinding")) return; // Bound files are refreshed from rename records at startup.
     if(fs.existsSync(store.get("WorkSaveNo"+MediaID+".URL"))){       // *当目标媒体库目录存在
         // OKErrorStreamer("MessageOn","<div class='LoadingCircle'>正在扫描EP信息，请稍后</div>",0,"..");
         var TargetWorkEP = fs.readdirSync(store.get("WorkSaveNo"+MediaID+".URL")).sort(naturalSort); //扫描目标媒体库目录下EP

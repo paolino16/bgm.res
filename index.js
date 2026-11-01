@@ -10,7 +10,7 @@ const Store = require('electron-store'); Store.initRenderer(); //初始化electr
 let SysdataOption={
   name:"sysdata",//文件名称,默认 config
   fileExtension:"json",//文件后缀,默认json
-}; const sysdata = new Store(SysdataOption);                          //?创建electron-store存储资源库对象-系统设置存储
+}; const sysdata = new Store(SysdataOption); if(!sysdata.get("Settings")) sysdata.set(require("./sysdata_default.json"));                          //?创建electron-store存储资源库对象-系统设置存储
 let userpage = null;/*用户页面全局对象*/
 let AddMediaPage = null;/*添加媒体页面全局对象*/
 let RecycleBinPage = null;/*添加已屏蔽作品页面全局对象*/
@@ -18,20 +18,15 @@ let MediaDirSetPage = null;/*添加媒体目录设置页面全局对象*/
 let OOBEPage = null;/*OOBE页面全局对象*/
 
 function createWindow () {
-    //获取屏幕分辨率
-    var screenElectron = require('electron').screen;
-    var screenwidthcalc = Math.min(parseInt(screenElectron.getPrimaryDisplay().workAreaSize.width),parseInt(screenElectron.getPrimaryDisplay().workAreaSize.height))
-    var screenscaleFactor = screenElectron.getPrimaryDisplay().scaleFactor;
+    const screenElectron = require('electron').screen;
+    const display = screenElectron.getDisplayNearestPoint(screenElectron.getCursorScreenPoint());
+    const desktopBounds = require('./js/desktop-window.cjs').desktopBounds(display.workArea);
     var win = null; //?主程序窗口对象
     // 创建主程序浏览器窗口
     if(sysdata.get("Settings.checkboxB.LocalStorageSystemOpenMicaMode")==true) //!启用 Acrylic window
     {
       win = new MicaBrowserWindow({
-        width:  parseInt(screenwidthcalc*(1.35)*screenscaleFactor),
-        height: parseInt(screenwidthcalc*(0.8)*screenscaleFactor),
-        // height: (screenElectron.getPrimaryDisplay().workAreaSize.height)*0.5,
-        minWidth: 1000,
-        minHeight: 600,
+        ...desktopBounds,
         //x: screenElectron.getPrimaryDisplay().workAreaSize.width-360,
         //y: screenElectron.getPrimaryDisplay().workAreaSize.height-500,
         alwaysOnTop: false,        //不置顶显示
@@ -64,7 +59,7 @@ function createWindow () {
 
       // 并且为你的应用加载index.html
       win.webContents.setUserAgent(`JimHan/bgm.res/${packageGet.version} (Windows) (https://github.com/JimHans/bgm.res)`);
-      win.loadFile('index.html');
+      win.loadFile(path.join(__dirname, 'desktop.html'));
 
       require('@electron/remote/main').enable(win.webContents) // 启用 electron/remote web组件
 
@@ -77,11 +72,7 @@ function createWindow () {
     else  //!不启用 Acrylic window
     {
       win = new BrowserWindow({
-        width:  parseInt(screenwidthcalc*(1.35)),
-        height: parseInt(screenwidthcalc*(0.8)),
-        // height: (screenElectron.getPrimaryDisplay().workAreaSize.height)*0.5,
-        minWidth: 1000,
-        minHeight: 600,
+        ...desktopBounds,
         //x: screenElectron.getPrimaryDisplay().workAreaSize.width-360,
         //y: screenElectron.getPrimaryDisplay().workAreaSize.height-500,
         alwaysOnTop: false,        //不置顶显示
@@ -110,7 +101,7 @@ function createWindow () {
     
       // 并且为你的应用加载index.html
       win.webContents.setUserAgent(`JimHan/bgm.res/${packageGet.version} (Windows) (https://github.com/JimHans/bgm.res)`);
-      win.loadFile('index.html');
+      win.loadFile(path.join(__dirname, 'desktop.html'));
 
       require('@electron/remote/main').enable(win.webContents) // 启用 electron/remote web组件
 
@@ -214,6 +205,12 @@ var trayMenuTemplate = [
 ];
 
 ipcMain.on("MainWindow",(event,data) => {
+  const owner=BrowserWindow.fromWebContents(event.sender);
+  if(owner&&owner!==win){
+    if(data==='Close'){owner.close();return;}
+    if(data==='Hide'){owner.minimize();return;}
+    if(data==='Refresh'){owner.reload();return;}
+  }
   console.log(data);
   if(data == 'Close') {event.preventDefault();app.quit();}
   if(data == 'Hide') {event.preventDefault();win.hide();}
@@ -256,7 +253,7 @@ ipcMain.on('MediaSettings', (event, arg) => {
     }
   });
   MediaSettings.webContents.setUserAgent(`JimHan/bgm.res/${packageGet.version} (Windows) (https://github.com/JimHans/bgm.res)`);
-  MediaSettings.loadFile('./pages/MediaSettings.html');// 并且为你的应用加载index.html
+  MediaSettings.loadFile(path.join(__dirname, './pages/MediaSettings.html'));// 并且为你的应用加载index.html
   require('@electron/remote/main').enable(MediaSettings.webContents) // 启用 electron/remote web组件
   // MediaSettings.webContents.openDevTools();
   MediaSettings.on('ready-to-show', function () {
@@ -291,7 +288,7 @@ ipcMain.on('MediaShare', (event, data) => {
     }
   });
   MediaShare.webContents.setUserAgent(`JimHan/bgm.res/${packageGet.version} (Windows) (https://github.com/JimHans/bgm.res)`);
-  MediaShare.loadFile('./pages/MediaShare.html');// 并且为你的应用加载index.html
+  MediaShare.loadFile(path.join(__dirname, './pages/MediaShare.html'));// 并且为你的应用加载index.html
   require('@electron/remote/main').enable(MediaShare.webContents) // 启用 electron/remote web组件
   // MediaShare.webContents.openDevTools();
   MediaShare.on('ready-to-show', function () {
@@ -331,7 +328,7 @@ function userpageShow () {
   });
   // 并且为你的应用加载index.html
   userpage.webContents.setUserAgent(`JimHan/bgm.res/${packageGet.version} (Windows) (https://github.com/JimHans/bgm.res)`);
-  userpage.loadFile('./pages/userpage.html');
+  userpage.loadFile(path.join(__dirname, './pages/userpage.html'));
   require('@electron/remote/main').enable(userpage.webContents) // 启用 electron/remote web组件
   // userpage.webContents.openDevTools();
 }
@@ -374,7 +371,7 @@ function AddMediaPageShow () {
     }
   });
   AddMediaPage.webContents.setUserAgent(`JimHan/bgm.res/${packageGet.version} (Windows) (https://github.com/JimHans/bgm.res)`);
-  AddMediaPage.loadFile('./pages/AddMediaPage.html');// 并且为你的应用加载index.html
+  AddMediaPage.loadFile(path.join(__dirname, './pages/AddMediaPage.html'));// 并且为你的应用加载index.html
   require('@electron/remote/main').enable(AddMediaPage.webContents) // 启用 electron/remote web组件
   // AddMediaPage.webContents.openDevTools();
   AddMediaPage.on('ready-to-show', function () {
@@ -422,7 +419,7 @@ function RecycleBinPageShow () {
     }
   });
   RecycleBinPage.webContents.setUserAgent(`JimHan/bgm.res/${packageGet.version} (Windows) (https://github.com/JimHans/bgm.res)`);
-  RecycleBinPage.loadFile('./pages/RecycleBinPage.html');// 并且为你的应用加载index.html
+  RecycleBinPage.loadFile(path.join(__dirname, './pages/RecycleBinPage.html'));// 并且为你的应用加载index.html
   require('@electron/remote/main').enable(RecycleBinPage.webContents) // 启用 electron/remote web组件
   RecycleBinPage.on('ready-to-show', function () {
     RecycleBinPage.webContents.send('data','OK'); // 发送消息
@@ -468,7 +465,7 @@ function MediaDirSetPageShow () {
       contextIsolation: false,
     }
   });
-  MediaDirSetPage.loadFile('./pages/MediaDirSetPage.html');// 并且为你的应用加载index.html
+  MediaDirSetPage.loadFile(path.join(__dirname, './pages/MediaDirSetPage.html'));// 并且为你的应用加载index.html
   require('@electron/remote/main').enable(MediaDirSetPage.webContents) // 启用 electron/remote web组件
   MediaDirSetPage.on('ready-to-show', function () {
     MediaDirSetPage.webContents.send('data','OK'); // 发送消息
@@ -509,7 +506,7 @@ ipcMain.on('OOBEPage', (event, data) => {
         contextIsolation: false,
       }
     });
-    OOBEPage.loadFile('./pages/OOBEPage.html');// 并且为你的应用加载index.html
+    OOBEPage.loadFile(path.join(__dirname, './pages/OOBEPage.html'));// 并且为你的应用加载index.html
     // OOBEPage.webContents.openDevTools();
     OOBEPage.on('ready-to-show', function () {
       OOBEPage.show() // 初始化后再显示
@@ -562,7 +559,7 @@ if (!gotTheLock) {app.quit();} else {
 
 // Electron会在初始化完成并且准备好创建浏览器窗口时调用这个方法
 // 部分 API 在 ready 事件触发后才能使用。
-app.whenReady().then(createWindow)
+app.whenReady().then(async () => { const linked = await require('./js/rename-binding-main.cjs').start({ipcMain, app, sysdata, Datastore: require('nedb')}); createWindow(); linked.hydrate().catch(error => console.error('Metadata hydration failed:', error.message)); }).catch(error => { dialog.showErrorBox('重命名产物绑定失败', error.message); app.quit(); })
 
 //当所有窗口都被关闭后退出
 app.on('window-all-closed', () => {

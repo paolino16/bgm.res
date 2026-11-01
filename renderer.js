@@ -29,8 +29,11 @@ const db = new Datastore({
   filename: path.join(path.join(appDataPath, 'bgm.res'), 'MediaData.db'),
   autoload: false
 });
-const ElectronStoreAdapter = nodeRequire('./js/ElectronStore2NeDB.js');
-const store = new ElectronStoreAdapter();  // 创建自定义适配器实例
+const ElectronStoreAdapter = nodeRequire('./js/legacy-store-adapter.cjs');
+const store = new ElectronStoreAdapter();
+const RenameBindingBridge = nodeRequire('./js/rename-binding-renderer.cjs');
+RenameBindingBridge.install({$,store});
+  // 创建自定义适配器实例
 //! NeDB数据库初始化OVER
 
 var IfArchivePageIsInit = 0;                                          //?是否已经初始化过Archive页面
@@ -249,7 +252,8 @@ function SysOnload() {
   }
   else{
     document.getElementById("RecentViewDetail").innerText="哇啊(＃°Д°)，您最近根本没有本地看过番的说！";
-    document.getElementById("RecentViewName").innerText="Unknown";
+    document.getElementById("RecentViewName").innerText="暂无观看记录";
+    document.getElementById("RecentViewTitle").innerText="最近观看";
     document.getElementById("RecentViewRatingScore").innerText="0.0";
     document.getElementById("RecentViewProgress").innerText="您最近没有观看记录！";
   }
@@ -407,11 +411,7 @@ function FloatBarAction(PageID) { //点击切换页面
     document.getElementById("SettingsPage").style.display="none";
 
     // *计算作品进度信息
-    let RecentViewWatchPercentSaver = 0;
-    let MediaID = sysdata.get("Settings.checkboxC.LocalStorageRecentViewLocalID");
-    for(let Tempi=1;Tempi<=parseInt(store.find("WorkSaveNo"+MediaID.toString()+".EPTrueNum"));Tempi++){
-      if(store.find("WorkSaveNo"+MediaID.toString()+".EPDetails.EP"+Tempi+'.Condition')=='Watched') RecentViewWatchPercentSaver++;
-    } RecentViewWatchPercentSaver = (RecentViewWatchPercentSaver/parseInt(store.find("WorkSaveNo"+MediaID.toString()+".EPTrueNum")))*100
+    const RecentViewWatchPercentSaver = nodeRequire("./js/home-progress.cjs").progress(store, sysdata.get("Settings.checkboxC.LocalStorageRecentViewLocalID"));
     document.getElementById("RecentViewFullProgressNum").innerText=RecentViewWatchPercentSaver.toFixed(1)+" %";
     document.getElementById("RecentViewFullProgressLine").style.width=RecentViewWatchPercentSaver.toString()+"%";
 
@@ -603,6 +603,7 @@ function FloatBarAction(PageID) { //点击切换页面
 
 //! 播放-调用MPV播放最近播放 传入Last/Next选择上次播放或者下一话 完成后刷新
 function RecentViewPlayAction(Type) {
+  if(!sysdata.get("Settings.checkboxC.LocalStorageRecentViewLocalID")){OKErrorStreamer("Error","暂无观看记录，请从媒体库选择章节",0);return;}
   //获取待播放的最近播放章节类型
   var RecentViewEpisodeType = sysdata.get("Settings.checkboxC.LocalStorageRecentViewEpisodeType");//localStorage.getItem("LocalStorageRecentViewEpisodeType");
   //按继续播放或播放下一话调用url与epid
@@ -639,15 +640,15 @@ function RecentViewPlayAction(Type) {
             sysdata.set("Settings.checkboxC.LocalStorageRecentViewEpisode",RecentEP);
             localStorage.setItem("LocalStorageRecentViewEpisode",RecentEP);
             if(RecentViewEpisodeType!='SP'){ //根据类型保存播放url
-            sysdata.set("Settings.checkboxC.LocalStorageRecentViewURL",store.find("WorkSaveNo"+MediaID+".URL")+"\\"+store.find("WorkSaveNo"+MediaID+".EPDetails.EP"+(RecentEP)+".URL"));
-            localStorage.setItem("LocalStorageRecentViewURL",store.find("WorkSaveNo"+MediaID+".URL")+"\\"+store.find("WorkSaveNo"+MediaID+".EPDetails.EP"+(RecentEP)+".URL"));
-            sysdata.set("Settings.checkboxC.LocalStorageRecentViewNextURL",store.find("WorkSaveNo"+MediaID+".URL")+"\\"+store.find("WorkSaveNo"+MediaID+".EPDetails.EP"+(Number(RecentEP)+1)+".URL"));
-            localStorage.setItem("LocalStorageRecentViewNextURL",store.find("WorkSaveNo"+MediaID+".URL")+"\\"+store.find("WorkSaveNo"+MediaID+".EPDetails.EP"+(Number(RecentEP)+1)+".URL"));}
+            sysdata.set("Settings.checkboxC.LocalStorageRecentViewURL",RenameBindingBridge.resolveMediaPath(store.find("WorkSaveNo"+MediaID+".URL"),store.find("WorkSaveNo"+MediaID+".EPDetails.EP"+(RecentEP)+".URL")));
+            localStorage.setItem("LocalStorageRecentViewURL",RenameBindingBridge.resolveMediaPath(store.find("WorkSaveNo"+MediaID+".URL"),store.find("WorkSaveNo"+MediaID+".EPDetails.EP"+(RecentEP)+".URL")));
+            sysdata.set("Settings.checkboxC.LocalStorageRecentViewNextURL",RenameBindingBridge.resolveMediaPath(store.find("WorkSaveNo"+MediaID+".URL"),store.find("WorkSaveNo"+MediaID+".EPDetails.EP"+(Number(RecentEP)+1)+".URL")));
+            localStorage.setItem("LocalStorageRecentViewNextURL",RenameBindingBridge.resolveMediaPath(store.find("WorkSaveNo"+MediaID+".URL"),store.find("WorkSaveNo"+MediaID+".EPDetails.EP"+(Number(RecentEP)+1)+".URL")));}
             if(RecentViewEpisodeType=='SP'){
-            sysdata.set("Settings.checkboxC.LocalStorageRecentViewURL",store.find("WorkSaveNo"+MediaID+".URL")+"\\"+store.find("WorkSaveNo"+MediaID+".SPDetails.SP"+(RecentEP)+".URL"));
-            localStorage.setItem("LocalStorageRecentViewURL",store.find("WorkSaveNo"+MediaID+".URL")+"\\"+store.find("WorkSaveNo"+MediaID+".SPDetails.SP"+(RecentEP)+".URL"));
-            sysdata.set("Settings.checkboxC.LocalStorageRecentViewNextURL",store.find("WorkSaveNo"+MediaID+".URL")+"\\"+store.find("WorkSaveNo"+MediaID+".SPDetails.SP"+(Number(RecentEP)+1)+".URL"));
-            localStorage.setItem("LocalStorageRecentViewNextURL",store.find("WorkSaveNo"+MediaID+".URL")+"\\"+store.find("WorkSaveNo"+MediaID+".SPDetails.SP"+(Number(RecentEP)+1)+".URL"));}  
+            sysdata.set("Settings.checkboxC.LocalStorageRecentViewURL",RenameBindingBridge.resolveMediaPath(store.find("WorkSaveNo"+MediaID+".URL"),store.find("WorkSaveNo"+MediaID+".SPDetails.SP"+(RecentEP)+".URL")));
+            localStorage.setItem("LocalStorageRecentViewURL",RenameBindingBridge.resolveMediaPath(store.find("WorkSaveNo"+MediaID+".URL"),store.find("WorkSaveNo"+MediaID+".SPDetails.SP"+(RecentEP)+".URL")));
+            sysdata.set("Settings.checkboxC.LocalStorageRecentViewNextURL",RenameBindingBridge.resolveMediaPath(store.find("WorkSaveNo"+MediaID+".URL"),store.find("WorkSaveNo"+MediaID+".SPDetails.SP"+(Number(RecentEP)+1)+".URL")));
+            localStorage.setItem("LocalStorageRecentViewNextURL",RenameBindingBridge.resolveMediaPath(store.find("WorkSaveNo"+MediaID+".URL"),store.find("WorkSaveNo"+MediaID+".SPDetails.SP"+(Number(RecentEP)+1)+".URL")));}
             SysOnload();
             OKErrorStreamer("OK","开始使用系统播放器播放，已记录进度",0);
           }
@@ -666,15 +667,15 @@ function RecentViewPlayAction(Type) {
             sysdata.set("Settings.checkboxC.LocalStorageRecentViewEpisode",RecentEP);
             localStorage.setItem("LocalStorageRecentViewEpisode",RecentEP);
             if(RecentViewEpisodeType!='SP'){ //根据类型保存播放url
-            sysdata.set("Settings.checkboxC.LocalStorageRecentViewURL",store.find("WorkSaveNo"+MediaID+".URL")+"\\"+store.find("WorkSaveNo"+MediaID+".EPDetails.EP"+(RecentEP)+".URL"));
-            localStorage.setItem("LocalStorageRecentViewURL",store.find("WorkSaveNo"+MediaID+".URL")+"\\"+store.find("WorkSaveNo"+MediaID+".EPDetails.EP"+(RecentEP)+".URL"));
-            sysdata.set("Settings.checkboxC.LocalStorageRecentViewNextURL",store.find("WorkSaveNo"+MediaID+".URL")+"\\"+store.find("WorkSaveNo"+MediaID+".EPDetails.EP"+(Number(RecentEP)+1)+".URL"));
-            localStorage.setItem("LocalStorageRecentViewNextURL",store.find("WorkSaveNo"+MediaID+".URL")+"\\"+store.find("WorkSaveNo"+MediaID+".EPDetails.EP"+(Number(RecentEP)+1)+".URL"));}
+            sysdata.set("Settings.checkboxC.LocalStorageRecentViewURL",RenameBindingBridge.resolveMediaPath(store.find("WorkSaveNo"+MediaID+".URL"),store.find("WorkSaveNo"+MediaID+".EPDetails.EP"+(RecentEP)+".URL")));
+            localStorage.setItem("LocalStorageRecentViewURL",RenameBindingBridge.resolveMediaPath(store.find("WorkSaveNo"+MediaID+".URL"),store.find("WorkSaveNo"+MediaID+".EPDetails.EP"+(RecentEP)+".URL")));
+            sysdata.set("Settings.checkboxC.LocalStorageRecentViewNextURL",RenameBindingBridge.resolveMediaPath(store.find("WorkSaveNo"+MediaID+".URL"),store.find("WorkSaveNo"+MediaID+".EPDetails.EP"+(Number(RecentEP)+1)+".URL")));
+            localStorage.setItem("LocalStorageRecentViewNextURL",RenameBindingBridge.resolveMediaPath(store.find("WorkSaveNo"+MediaID+".URL"),store.find("WorkSaveNo"+MediaID+".EPDetails.EP"+(Number(RecentEP)+1)+".URL")));}
             if(RecentViewEpisodeType=='SP'){
-            sysdata.set("Settings.checkboxC.LocalStorageRecentViewURL",store.find("WorkSaveNo"+MediaID+".URL")+"\\"+store.find("WorkSaveNo"+MediaID+".SPDetails.SP"+(RecentEP)+".URL"));
-            localStorage.setItem("LocalStorageRecentViewURL",store.find("WorkSaveNo"+MediaID+".URL")+"\\"+store.find("WorkSaveNo"+MediaID+".SPDetails.SP"+(RecentEP)+".URL"));
-            sysdata.set("Settings.checkboxC.LocalStorageRecentViewNextURL",store.find("WorkSaveNo"+MediaID+".URL")+"\\"+store.find("WorkSaveNo"+MediaID+".SPDetails.SP"+(Number(RecentEP)+1)+".URL"));
-            localStorage.setItem("LocalStorageRecentViewNextURL",store.find("WorkSaveNo"+MediaID+".URL")+"\\"+store.find("WorkSaveNo"+MediaID+".SPDetails.SP"+(Number(RecentEP)+1)+".URL"));}
+            sysdata.set("Settings.checkboxC.LocalStorageRecentViewURL",RenameBindingBridge.resolveMediaPath(store.find("WorkSaveNo"+MediaID+".URL"),store.find("WorkSaveNo"+MediaID+".SPDetails.SP"+(RecentEP)+".URL")));
+            localStorage.setItem("LocalStorageRecentViewURL",RenameBindingBridge.resolveMediaPath(store.find("WorkSaveNo"+MediaID+".URL"),store.find("WorkSaveNo"+MediaID+".SPDetails.SP"+(RecentEP)+".URL")));
+            sysdata.set("Settings.checkboxC.LocalStorageRecentViewNextURL",RenameBindingBridge.resolveMediaPath(store.find("WorkSaveNo"+MediaID+".URL"),store.find("WorkSaveNo"+MediaID+".SPDetails.SP"+(Number(RecentEP)+1)+".URL")));
+            localStorage.setItem("LocalStorageRecentViewNextURL",RenameBindingBridge.resolveMediaPath(store.find("WorkSaveNo"+MediaID+".URL"),store.find("WorkSaveNo"+MediaID+".SPDetails.SP"+(Number(RecentEP)+1)+".URL")));}
             SysOnload();
             let mpvPlayer = new mpv({"binary": packUrl,},["--fps=60"]);
             mpvPlayer.start()
@@ -694,15 +695,15 @@ function RecentViewPlayAction(Type) {
             sysdata.set("Settings.checkboxC.LocalStorageRecentViewEpisode",RecentEP);
             localStorage.setItem("LocalStorageRecentViewEpisode",RecentEP);
             if(RecentViewEpisodeType!='SP'){ //根据类型保存播放url
-            sysdata.set("Settings.checkboxC.LocalStorageRecentViewURL",store.find("WorkSaveNo"+MediaID+".URL")+"\\"+store.find("WorkSaveNo"+MediaID+".EPDetails.EP"+(RecentEP)+".URL"));
-            localStorage.setItem("LocalStorageRecentViewURL",store.find("WorkSaveNo"+MediaID+".URL")+"\\"+store.find("WorkSaveNo"+MediaID+".EPDetails.EP"+(RecentEP)+".URL"));
-            sysdata.set("Settings.checkboxC.LocalStorageRecentViewNextURL",store.find("WorkSaveNo"+MediaID+".URL")+"\\"+store.find("WorkSaveNo"+MediaID+".EPDetails.EP"+(Number(RecentEP)+1)+".URL"));
-            localStorage.setItem("LocalStorageRecentViewNextURL",store.find("WorkSaveNo"+MediaID+".URL")+"\\"+store.find("WorkSaveNo"+MediaID+".EPDetails.EP"+(Number(RecentEP)+1)+".URL"));}
+            sysdata.set("Settings.checkboxC.LocalStorageRecentViewURL",RenameBindingBridge.resolveMediaPath(store.find("WorkSaveNo"+MediaID+".URL"),store.find("WorkSaveNo"+MediaID+".EPDetails.EP"+(RecentEP)+".URL")));
+            localStorage.setItem("LocalStorageRecentViewURL",RenameBindingBridge.resolveMediaPath(store.find("WorkSaveNo"+MediaID+".URL"),store.find("WorkSaveNo"+MediaID+".EPDetails.EP"+(RecentEP)+".URL")));
+            sysdata.set("Settings.checkboxC.LocalStorageRecentViewNextURL",RenameBindingBridge.resolveMediaPath(store.find("WorkSaveNo"+MediaID+".URL"),store.find("WorkSaveNo"+MediaID+".EPDetails.EP"+(Number(RecentEP)+1)+".URL")));
+            localStorage.setItem("LocalStorageRecentViewNextURL",RenameBindingBridge.resolveMediaPath(store.find("WorkSaveNo"+MediaID+".URL"),store.find("WorkSaveNo"+MediaID+".EPDetails.EP"+(Number(RecentEP)+1)+".URL")));}
             if(RecentViewEpisodeType=='SP'){
-            sysdata.set("Settings.checkboxC.LocalStorageRecentViewURL",store.find("WorkSaveNo"+MediaID+".URL")+"\\"+store.find("WorkSaveNo"+MediaID+".SPDetails.SP"+(RecentEP)+".URL"));
-            localStorage.setItem("LocalStorageRecentViewURL",store.find("WorkSaveNo"+MediaID+".URL")+"\\"+store.find("WorkSaveNo"+MediaID+".SPDetails.SP"+(RecentEP)+".URL"));
-            sysdata.set("Settings.checkboxC.LocalStorageRecentViewNextURL",store.find("WorkSaveNo"+MediaID+".URL")+"\\"+store.find("WorkSaveNo"+MediaID+".SPDetails.SP"+(Number(RecentEP)+1)+".URL"));
-            localStorage.setItem("LocalStorageRecentViewNextURL",store.find("WorkSaveNo"+MediaID+".URL")+"\\"+store.find("WorkSaveNo"+MediaID+".SPDetails.SP"+(Number(RecentEP)+1)+".URL"));}  
+            sysdata.set("Settings.checkboxC.LocalStorageRecentViewURL",RenameBindingBridge.resolveMediaPath(store.find("WorkSaveNo"+MediaID+".URL"),store.find("WorkSaveNo"+MediaID+".SPDetails.SP"+(RecentEP)+".URL")));
+            localStorage.setItem("LocalStorageRecentViewURL",RenameBindingBridge.resolveMediaPath(store.find("WorkSaveNo"+MediaID+".URL"),store.find("WorkSaveNo"+MediaID+".SPDetails.SP"+(RecentEP)+".URL")));
+            sysdata.set("Settings.checkboxC.LocalStorageRecentViewNextURL",RenameBindingBridge.resolveMediaPath(store.find("WorkSaveNo"+MediaID+".URL"),store.find("WorkSaveNo"+MediaID+".SPDetails.SP"+(Number(RecentEP)+1)+".URL")));
+            localStorage.setItem("LocalStorageRecentViewNextURL",RenameBindingBridge.resolveMediaPath(store.find("WorkSaveNo"+MediaID+".URL"),store.find("WorkSaveNo"+MediaID+".SPDetails.SP"+(Number(RecentEP)+1)+".URL")));}
             SysOnload();
             let mpvPlayer = new mpv({"binary": runtimeUrl,},["--fps=60"]);
             mpvPlayer.start()
@@ -751,12 +752,12 @@ function ArchivePageInit(){
     // requestAnimationFrame(ArchivePageInitCore);
     OKErrorStreamer("MessageOn","正在加载媒体库 0%",0);
     var MediaBaseTempDataSaver = store.get();
+    const ArchiveCardMarkup = [];
     ArchivePageInitCore();
     // *扫描作品bgmID获取作品信息
     function ArchivePageInitCore(){
     // for(let MediaBaseScanCounter=1;MediaBaseScanCounter<=MediaBaseNumberGet;MediaBaseScanCounter++){
-      if(MediaBaseScanCounter>MediaBaseNumberGet) {OKErrorStreamer("MessageOff","媒体库加载完成！",0);OKErrorStreamer("OK","媒体库加载完成！",0);return;}
-      OKErrorStreamer("MessageOn","正在加载媒体库"+parseInt(MediaBaseScanCounter*100/MediaBaseNumberGet)+"%",0); //加载提示
+      if(MediaBaseScanCounter>MediaBaseNumberGet) {document.getElementById("ArchivePageContent").innerHTML=ArchiveCardMarkup.join('');nodeRequire('./js/library-rendering.cjs').mountCovers(document.getElementById("ArchivePageContent"));OKErrorStreamer("MessageOff","媒体库加载完成！",0);OKErrorStreamer("OK","媒体库加载完成！",0);return;}
       if(MediaBaseTempDataSaver["WorkSaveNo"+MediaBaseScanCounter.toString()]["ExistCondition"] == "Deleted") {;} //发现已删除作品，自动跳过
       else{
 
@@ -772,7 +773,7 @@ function ArchivePageInit(){
       if (MediaBaseTempDataSaver["WorkSaveNo"+MediaBaseScanCounter.toString()]["BDMV"] == "BDMV") 
         {ArchiveCoverPNG = "ArchiveCoverBDMV.png"; ArchiveBDMVTag = "block"} //BDMV封面
 
-      $("#ArchivePageContent").append( "<div id='ArchiveWorkNo"+MediaBaseScanCounter.toString()+"' class='ArchiveCardHover' style='background:url(\""+MediaBaseTempDataSaver["WorkSaveNo"+MediaBaseScanCounter.toString()]["Cover"]+"\") no-repeat top;background-size:cover;'>"+
+      ArchiveCardMarkup.push( "<div id='ArchiveWorkNo"+MediaBaseScanCounter.toString()+"' class='ArchiveCardHover' data-cover='"+nodeRequire('./js/library-rendering.cjs').escapeAttribute(MediaBaseTempDataSaver["WorkSaveNo"+MediaBaseScanCounter.toString()]["Cover"])+"' style='background-color:#292d33;background-repeat:no-repeat;background-position:top;background-size:cover;'>"+
       "<div class='ArchiveCardThumb' style='background:url(./assets/"+ArchiveCoverPNG+") no-repeat center;background-size:cover;'></div>"+ //封面遮罩阴影
       "<div class='ArchivePageBDMVTag' style='display:"+ArchiveBDMVTag+"'>BDMV</div>"+ //BDMV标志
       "<div id='ArchiveCardProgressShowerNo"+MediaBaseScanCounter.toString()+"' class='ArchiveCardProgressShower' style='width:"+ArchiveCardWatchPercentSaver+"%;border-top-right-radius: "+ArchiveCardWatchPercentRightTopBorder+";border-bottom-right-radius: "+ArchiveCardWatchPercentRightBorder+";background-color:"+SettingsColorPicker(0.8)+";'></div>"+ //进度指示
@@ -963,37 +964,20 @@ const { LocalWorkManualAddAndSave } = nodeRequire('./js/Mainpage_Modules/Mainpag
 /* 媒体库详情页面初始化系统 */
 function ArchiveMediaDetailsPage(MediaID){
   var bgmID = store.get("WorkSaveNo"+MediaID+".bgmID");
-  for (let j = 0; j < 5; j++) {document.getElementsByName('ArchivePageContentDetailsSelfRankBlockStars')[j].className = 'ArchivePageContentDetailsempty-star'} //清空SelfRankBlockStars
-  document.getElementById("ArchivePageContentDetailsSelfRankBlockDate").innerHTML="收藏日期：未知"; //清空SelfRankBlockDate
-  document.getElementById("ArchivePageContentDetailsSelfRankBlockComment").innerHTML="吐槽：未知"; //清空SelfRankBlockComment
-  document.getElementById("ArchivePageContentDetailsSelfRankBlockRate").innerText="未评分";//清空SelfRankBlockRates
+  nodeRequire('./js/subject-relations.cjs').load({$,document,store,subjectId:bgmID,openLocal:ArchiveMediaDetailsPage,openExternal:url=>shell.openExternal(url),color:SettingsColorPicker});
   document.getElementById("ArchivePageContentDetailsTitleBlock").innerHTML=""; //清空TitleBlock
-  document.getElementById("ArchivePageContentDetailsDetailsBlock").innerHTML=""; //清空DetailsBlock
   document.getElementById("ArchivePageContentDetailsEpisodeBlock").innerHTML=""; //清空EpisodeBlock
   document.getElementById("ArchivePageContentDetailsSpecialEpisodeBlock").innerHTML=""; //清空SpecialEpisodeBlock
-  document.getElementById("ArchivePageContentDetailsTagBlock").innerHTML=""; //清空TagBlock
-  document.getElementById("ArchivePageContentDetailsStaffBlock").innerHTML=""; //清空StaffBlock
-  document.getElementById("ArchivePageContentDetailsCharacterBlock").innerHTML=""; //清空CharacterBlock
-  document.getElementById("ArchivePageContentDetailsPersonBlock").innerHTML=""; //清空PersonBlock
-  document.getElementById("ArchivePageContentDetailsRelativeBlock").innerHTML=""; //清空RelativeBlock
   document.getElementById("ArchivePageContentDetailsEpisodeExtraBlock").innerHTML=""; //清空EpisodeExtraBlock
-  document.getElementById("ArchivePageContentDetailsContentBlock").innerHTML=""; //清空ContentBlock
-  document.getElementById("ArchivePageContentDetailsFriendNum").innerHTML="还没有好友看过"; //清空FriendNum
-  document.getElementById("ArchivePageContentDetailsFriendStd").innerHTML="暂无标准差"; //清空FriendStd
-  document.getElementById("ArchivePageContentDetailsFriendsInfo").innerHTML=""; //清空FriendsInfo
-  document.getElementById("ArchivePageContentDetailsFriendScore").innerHTML="-.-"; //清空FriendScore
-  document.getElementById("ArchivePageContentDetailsFriendRank").innerHTML="暂无评价"; //清空FriendRank
   
   //?填充BDMV标志
   var ArchiveInfoCoverPNG = "display:none"; var ArchiveInfoBDMVTag = "none"; //默认关闭BDMV标志
   document.getElementById("ArchivePageContentDetailsEpisodeBlockContainer").style.display = "block"; //显示章节详情
   document.getElementById("ArchivePageContentDetailsBDMVBanner").style.display = "none"; //默认屏蔽BDMV横幅
-  document.getElementById('ArchivePageContentDetailsSelfRankBlock').style.marginTop='6.5%';
   if (store.get("WorkSaveNo"+MediaID+".BDMV") == "BDMV") {
     ArchiveInfoCoverPNG = "background:url(./assets/ArchiveInfoBDMV.png) no-repeat center;background-size:cover;opacity:1"; 
     document.getElementById("ArchivePageContentDetailsEpisodeBlockContainer").style.display = "none"; //对于BDMV屏蔽章节详情
     document.getElementById("ArchivePageContentDetailsBDMVBanner").style.display = "flex"; //显示BDMV横幅
-    document.getElementById('ArchivePageContentDetailsSelfRankBlock').style.marginTop='2%';
     ArchiveInfoBDMVTag = "block";} //BDMV封面
 
   //?填充标题&评分条UI
@@ -1004,8 +988,6 @@ function ArchiveMediaDetailsPage(MediaID){
     "<div id='ArchivePageContentDetailsBannerButtonContainer' style='position: absolute;width: 30%;height: auto;left: 38.5787%;top: 80%;bottom: 0%;max-width: 500px;display: flex;align-content: stretch;align-items: stretch;flex-direction: row;'>"+
       "<div id='ArchivePageContentDetailsFolderURL' class='ArchivePageButton' style='position:relative;top:80%;bottom:0%;height:auto;font-size:2.3vmin;-webkit-app-region:unset;border-top-right-radius: 0px; border-bottom-right-radius: 0px;border:unset;top: 0%;width: 40%;bottom: 0%;height: auto;backdrop-filter: none;' onclick=\"exec('explorer "+store.get("WorkSaveNo"+MediaID+".URL").replace(/(\\)/g,"\\\\").replace(/(&)/g,"^&").replace(/(')/g,'\\\'')+"');\"><img src='./assets/folder.svg' alt='folder' height=45% style='margin-right:5px;'/>打开文件夹</div>"+
       "<div id='ArchivePageContentDetailsEditor' class='ArchivePageButton' style='position:relative;top:80%;width:3%;bottom:0%;height:auto;font-size:2.3vmin;-webkit-app-region:unset;border-top-left-radius: 0px; border-bottom-left-radius: 0px;border:unset;top: 0%;width: 11%;bottom: 0%;height: auto;backdrop-filter: none;' onclick='ArchiveContentEditer("+MediaID.toString()+");'><img src='./assets/edit.svg' alt='edit' height=40% style='margin:5px;'/></div>"+
-      "<div id='ArchivePageContentDetailsRelavant' class='ArchivePageContentDetailsRelavant'><div id='ArchivePageContentDetailsRelavantCover' style='position:absolute;top:0%;height:100%;width:30%;left: 0%;border-radius:10px;border-top-right-radius: 0px; border-bottom-right-radius: 0px;' ></div>"+
-      "<div id='ArchivePageContentDetailsRelavantName' style='width: 60%;overflow: hidden;-webkit-box-orient: vertical;-webkit-line-clamp: 2;display: -webkit-box;position: absolute;right: 5%;margin-top: 5px;text-align:left;font-size:15px'></div></div>"+
     "</div>"+
     
     //评分系统
@@ -1029,7 +1011,7 @@ function ArchiveMediaDetailsPage(MediaID){
 
   //?填充评分&标准差&检测是否为当季新番
   $.getJSON("https://api.bgm.tv/v0/subjects/"+bgmID.toString(), function(data){
-    // var ArchivePageContentDetailsRatingScore =document.createTextNode(data.rating.score.toFixed(1));
+    document.getElementById('ArchivePageContentDetailsTitleJp').innerText=data.name || '';
     document.getElementById("ArchivePageContentDetailsRatingScore").innerText=data.rating.score.toFixed(1);//.appendChild(ArchivePageContentDetailsRatingScore);
     store.set("WorkSaveNo"+MediaID.toString()+".Score",data.rating.score); 
     $("#ArchivePageContentDetailsRatingScore").append("<div style='font-size:2vmin;margin-top: -10px;font-weight: normal;color: rgb(172, 172, 172);text-decoration: underline;font-family: bgmUI;' onclick=\"window.open('https://netaba.re/subject/"+bgmID.toString()+"')\">查看趋势</div>");
@@ -1057,7 +1039,6 @@ function ArchiveMediaDetailsPage(MediaID){
     
     // 检查是否为当季新番
     document.getElementById('ArchivePageContentDetailsAutoEPBanner').style.display='none';
-    // document.getElementById('ArchivePageContentDetailsSelfRankBlock').style.marginTop='6.5%';
     let CurrMonth = new Date().getMonth()+1;
     let CurrYear = new Date().getFullYear();
     if (data.date == null) data.date = "1368-01-23";
@@ -1066,11 +1047,8 @@ function ArchiveMediaDetailsPage(MediaID){
     if(CurrSeason == AnimeSeason && parseInt(CurrYear) == parseInt(data.date.substr(0,4)))
     {
       document.getElementById('ArchivePageContentDetailsAutoEPBanner').style.display='flex';
-      document.getElementById('ArchivePageContentDetailsSelfRankBlock').style.marginTop='2%';
       store.set("WorkSaveNo"+MediaID+".EPAutoUpdate",true);
     }
-    if (store.get("WorkSaveNo"+MediaID+".BDMV") == "BDMV")  //给BDMV标头擦屁股
-      {document.getElementById('ArchivePageContentDetailsSelfRankBlock').style.marginTop='2%';}
 
     //计算标准差
     if(sysdata.get("Settings.checkboxB.LocalStorageMediaShowStd")){ //判断是否显示标准差
@@ -1120,54 +1098,13 @@ function ArchiveMediaDetailsPage(MediaID){
   else {document.getElementById('ArchivePageContentDetailsSpecialEpisodeBlock').style.display='grid';}
   for(let TempCounter = 1;TempCounter<=store.get("WorkSaveNo"+MediaID+".SPTrueNum");TempCounter++){
     $("#ArchivePageContentDetailsSpecialEpisodeBlock").append( "<div id='ArchivePageContentDetailsSpecialEpisodeNo"+TempCounter+"' class='ArchiveCardHover' "+
-    "style='width:100%;height:100%;padding:0px;font-family: bgmUIHeavy;font-size:25px;text-align:center;display:flex;justify-content:center;align-items:center;transition:all 0.3s cubic-bezier(0,0,0.2,1);box-shadow:0px 0px 0px 0px #ffffff4a;background-color:rgb(0,0,0,0.3);/*backdrop-filter: blur(30px)*/' onclick='ArchiveMediaDetailsEpInfoCard(event,"+MediaID+","+TempCounter+",\"SP\");'>"+"SP "+TempCounter+"</div>" );
+    "style='width:100%;height:100%;padding:0px;font-family: bgmUIHeavy;font-size:25px;text-align:center;display:flex;justify-content:center;align-items:center;transition:all 0.3s cubic-bezier(0,0,0.2,1);box-shadow:0px 0px 0px 0px #ffffff4a;background-color:rgb(0,0,0,0.3);/*backdrop-filter: blur(30px)*/' onclick='ArchiveMediaDetailsEpInfoCard(event,"+MediaID+","+TempCounter+",\"SP\");'>"+"SP "+(store.get("WorkSaveNo"+MediaID+".SPDetails.SP"+TempCounter+".EpisodeNumber") || TempCounter)+"</div>" );
     //width:12.1%;height:4vw;padding:2px;
     //检测是否已播放过
     if(store.get("WorkSaveNo"+MediaID+".SPDetails.SP"+TempCounter+'.Condition')=='Watched'){
       document.getElementById('ArchivePageContentDetailsSpecialEpisodeNo'+TempCounter).style.backgroundColor=SettingsColorPicker(0.4);
       document.getElementById('ArchivePageContentDetailsSpecialEpisodeNo'+TempCounter).style.boxShadow='0px 0px 0px 2px '+SettingsColorPicker(0.4)} //' rgb(240 145 153)'
   } 
-
-  //?填充个人评分信息
-  if(sysdata.get('UserData.UserToken')&&sysdata.get('UserData.UserToken')!=""){
-  $("#ArchivePageContentDetailsSelfRankBlockState").attr('onchange','ArchiveMediaDetailsUserFavouriteUpdate('+bgmID+');');
-  $.ajax({ //获取用户信息
-    url: "https://api.bgm.tv/v0/me",type: 'GET',headers: {"Authorization": "Bearer "+ sysdata.get('UserData.UserToken')},timeout : 2000,
-    success: function (data) {
-        $.ajax({ //获取收藏信息
-          url: "https://api.bgm.tv/v0/users/"+data.username+"/collections/"+bgmID,type: 'GET',dataType: "json",headers: {"Authorization": "Bearer "+ sysdata.get('UserData.UserToken')},timeout : 2000,
-          success: function (data2) {
-            document.getElementById('ArchivePageContentDetailsSelfRankBlockDate').innerHTML="收藏日期："+data2.updated_at.substring(0,10);
-            document.getElementById('ArchivePageContentDetailsSelfRankBlockComment').innerHTML="吐槽："+data2.comment;
-            document.getElementById('ArchivePageContentDetailsSelfRankBlockComment').title="吐槽："+data2.comment;
-            let SelfScoreVal=data2.rate; let index = parseInt(SelfScoreVal / 2);let spans = document.getElementsByName('ArchivePageContentDetailsSelfRankBlockStars');
-            for (let j = index; j < 5; j++) {spans[j].className = 'ArchivePageContentDetailsempty-star'}
-            for (let k = 0; k < index; k++) {spans[k].className = 'ArchivePageContentDetailsfull-star'}
-            if(index * 2 !== SelfScoreVal) {spans[index].className = 'ArchivePageContentDetailshalf-star'}
-
-            if(SelfScoreVal > 9.5) {document.getElementById("ArchivePageContentDetailsSelfRankBlockRate").innerText="超神作";}
-            else if(SelfScoreVal > 8.5) {document.getElementById("ArchivePageContentDetailsSelfRankBlockRate").innerText="神作";}
-            else if(SelfScoreVal > 7.5) {document.getElementById("ArchivePageContentDetailsSelfRankBlockRate").innerText="力荐";}
-            else if(SelfScoreVal > 6.5) {document.getElementById("ArchivePageContentDetailsSelfRankBlockRate").innerText="推荐";}
-            else if(SelfScoreVal > 5.5) {document.getElementById("ArchivePageContentDetailsSelfRankBlockRate").innerText="还行";}
-            else if(SelfScoreVal > 4.5) {document.getElementById("ArchivePageContentDetailsSelfRankBlockRate").innerText="不过不失";}
-            else if(SelfScoreVal > 3.5) {document.getElementById("ArchivePageContentDetailsSelfRankBlockRate").innerText="较差";}
-            else if(SelfScoreVal > 2.5) {document.getElementById("ArchivePageContentDetailsSelfRankBlockRate").innerText="差";}
-            else if(SelfScoreVal > 1.5) {document.getElementById("ArchivePageContentDetailsSelfRankBlockRate").innerText="很差";}
-            else if(SelfScoreVal >= 1) {document.getElementById("ArchivePageContentDetailsSelfRankBlockRate").innerText="不忍直视";}
-            switch (data2.type){
-              case 1: document.getElementById('ArchivePageContentDetailsSelfRankBlockState').value='wish';break;
-              case 2: document.getElementById('ArchivePageContentDetailsSelfRankBlockState').value='collect';break;
-              case 3: document.getElementById('ArchivePageContentDetailsSelfRankBlockState').value='do';break;
-              case 4: document.getElementById('ArchivePageContentDetailsSelfRankBlockState').value='on_hold';break;
-              case 5: document.getElementById('ArchivePageContentDetailsSelfRankBlockState').value='dropped';break;
-            }
-          }, 
-          error: function () {document.getElementById('ArchivePageContentDetailsSelfRankBlockState').value='uncollect';}
-        });
-      }
-    });
-  } else{document.getElementById('ArchivePageContentDetailsSelfRankBlockComment').innerText='您还未登录，无法获取评价'/* OKErrorStreamer("Error","您还未登录",0); */}
 
   //?播放进度同步至本地
   if(sysdata.get("UserData.userpageProgressSyncOptions")=='Cloud'||sysdata.get("UserData.userpageProgressSyncOptions")=='Mix'){
@@ -1260,114 +1197,6 @@ function ArchiveMediaDetailsPage(MediaID){
   }
   
 
-  //?填充Tag,中英文作品名，作品详情
-  $.getJSON("https://api.bgm.tv/v0/subjects/"+bgmID, function(data){
-    document.getElementById("ArchivePageContentDetailsDetailsBlock").innerText=data.summary;
-    document.getElementById("ArchivePageContentDetailsTitleJp").innerText=data.name;
-
-    //填充Tag
-    for(let Tempj = 0;Tempj!=data.tags.length;Tempj++)
-    $("#ArchivePageContentDetailsTagBlock").append("<div class='ArchivePageContentTag' onclick='window.open(\"https://bgm.tv/anime/tag/"+data.tags[Tempj].name+"\")'>"+data.tags[Tempj].name+"</div>");
-
-    //填充作品详情
-    for(var Tempj = 0;Tempj!=data.infobox.length;Tempj++){
-    if(data.infobox[Tempj].key=='别名'){
-      $("#ArchivePageContentDetailsStaffBlock").append("<div id='ArchivePageContentDetailsStaffNickName'style='width:100%;margin:5px;margin-top:10px;margin-left:0px;'>"+data.infobox[Tempj].key+': </div>');
-      for(let Tempk = 0;Tempk!=data.infobox[Tempj].value.length;Tempk++)$("#ArchivePageContentDetailsStaffNickName").append(data.infobox[Tempj].value[Tempk].v+"&nbsp;&nbsp;");}
-    else $("#ArchivePageContentDetailsStaffBlock").append("<div style='width:100%;margin:5px;margin-top:10px;margin-left:0px;'>"+data.infobox[Tempj].key+': '+data.infobox[Tempj].value+"</div>");}
-
-  }).done(function(){document.getElementById('ArchivePageContentDetailsBlur').style.height=(Math.min(document.getElementById('ArchivePageContentDetails').scrollHeight),(document.getElementById('ArchivePageContentLastCard').offsetTop)).toString()+'px';})
-  .fail(function() {OKErrorStreamer("Error","无法连接Bangumi",0); document.getElementById('ArchivePageContentDetailsBlur').style.height=(Math.min(document.getElementById('ArchivePageContentDetails').scrollHeight),(document.getElementById('ArchivePageContentLastCard').offsetTop)).toString()+'px';});
-
-  //?填充相关作品
-  if(sysdata.get("Settings.checkboxB.LocalStorageMediaShowRelative")){ //判断是否显示相关作品
-  $.getJSON("https://api.bgm.tv/v0/subjects/"+bgmID+"/subjects", function(data){
-    for(let Tempj = 0;Tempj!=data.length;Tempj++){
-      if(data[Tempj].type==2&&!/衍生|角色|世界观|番外/i.test(data[Tempj].relation)){document.getElementById("ArchivePageContentDetailsRelavant").style.display='block';
-      document.getElementById("ArchivePageContentDetailsRelavant").title=data[Tempj].name_cn;
-      $("#ArchivePageContentDetailsRelavant").attr('onclick','window.open("https://bgm.tv/subject/'+data[Tempj].id+'")');
-      document.getElementById("ArchivePageContentDetailsRelavantCover").style.background="url('"+data[Tempj].images.small+"') no-repeat center";
-      if(data[Tempj].images.small==null) document.getElementById("ArchivePageContentDetailsRelavantCover").style.background="url('./assets/no_img.gif') no-repeat center"; //如果没有图片就用默认图片
-      document.getElementById("ArchivePageContentDetailsRelavantCover").style.backgroundSize="cover";
-      document.getElementById("ArchivePageContentDetailsRelavantName").innerHTML=data[Tempj].relation+"<br/>"+data[Tempj].name_cn;
-      for(let Temp = 1;Temp<=sysdata.get("Settings.checkboxC.LocalStorageMediaBaseNumber");Temp++){
-        if(store.get("WorkSaveNo"+Temp+".ExistCondition")=='Exist'&&store.get("WorkSaveNo"+Temp+".bgmID")==data[Tempj].id)
-        {$("#ArchivePageContentDetailsRelavant").attr('onclick','ArchiveMediaDetailsPage('+Temp+')');break;}
-      } break;
-  }}})
-  }
-
-  //?填充作品角色
-  if(sysdata.get("Settings.checkboxB.LocalStorageMediaShowCharacter")){ //判断是否显示角色信息
-  $.getJSON("https://api.bgm.tv/v0/subjects/"+bgmID+"/characters", function(data){
-    var Chara_Data = data;
-    function ArchiveMediaDetailsPageCharacterFiller(Tempj){
-      $.getJSON("https://api.bgm.tv/v0/characters/"+data[Tempj].id, function(data2){
-        if(data2.infobox[0]&&data2.infobox[0].key=='简体中文名') var Chara_Data_NameCN = data2.infobox[0].value;else var Chara_Data_NameCN = Chara_Data[Tempj].name;
-        if(Chara_Data[Tempj].actors[0]!=null) var Chara_Data_CV = ", CV: "+Chara_Data[Tempj].actors[0].name;else var Chara_Data_CV = ", CV: "+'未知';
-        if(!sysdata.get("Settings.checkboxB.LocalStorageMediaShowCharacterCV")){Chara_Data_CV = ''} //判断是否显示CV
-        document.getElementsByName('ArchiveMediaDetailsPageCharacterCard')[Tempj].innerHTML=( //"<div class='ArchiveCardCharacterHover' onclick='window.open(\"https://bgm.tv/character/"+Chara_Data[Tempj].id+"\");'>"+ //id='ArchivePageContentDetailsCharacterNo"+Tempj+"'
-        "<div style='position:relative;left:0%;top:0%;height:100%;aspect-ratio:1;background:url(\""+Chara_Data[Tempj].images.medium+"\") no-repeat top;background-size:cover;border-radius:8px;border-top-right-radius:0;border-bottom-right-radius:0;'></div>"+
-        "<div style='position:relative;margin-right:0%;margin-left:1%;margin-top:8px;height:100%;border-radius:8px;width: 100%;text-align: left;width:fit-content;padding:10px;white-space:nowrap;font-size:1.5vw;font-size:min(1.5vw, 21px);'><b>"+Chara_Data[Tempj].name+"<br/>("+Chara_Data_NameCN+")</b><br/>"+Chara_Data[Tempj].relation+Chara_Data_CV+"</div>");
-        $(document.getElementsByName('ArchiveMediaDetailsPageCharacterCard')[Tempj]).attr('onclick','window.open(\"https://bgm.tv/character/'+Chara_Data[Tempj].id+'\");');
-      }).done(function(){document.getElementById('ArchivePageContentDetailsBlur').style.height=(Math.min(document.getElementById('ArchivePageContentDetails').scrollHeight),(document.getElementById('ArchivePageContentLastCard').offsetTop)).toString()+'px';});
-    }
-    for(let Tempj=0;Tempj!=data.length;Tempj++){
-      $("#ArchivePageContentDetailsCharacterBlock").append( "<div class='ArchiveCardCharacterHover' name='ArchiveMediaDetailsPageCharacterCard'></div>");
-      ArchiveMediaDetailsPageCharacterFiller(Tempj);}
-
-  }).done(function(){document.getElementById('ArchivePageContentDetailsBlur').style.height=(Math.min(document.getElementById('ArchivePageContentDetails').scrollHeight),(document.getElementById('ArchivePageContentLastCard').offsetTop)).toString()+'px';})
-  .fail(function() {OKErrorStreamer("Error","无法连接Bangumi",0); document.getElementById('ArchivePageContentDetailsBlur').style.height=(Math.min(document.getElementById('ArchivePageContentDetails').scrollHeight),(document.getElementById('ArchivePageContentLastCard').offsetTop)).toString()+'px';});
-  }else {$("#ArchivePageContentDetailsCharacterBlock").append("<div style='position:relative;margin:auto;margin-bottom:5%;font-family:bgmUIHeavy;color: rgba(255, 255, 255, 0.5);font-size:3.5vmin'>角色信息已隐藏</div>")}
-
-  //?填充作品相关条目
-  if(1){ //判断是否显示相关条目信息
-    $.getJSON("https://api.bgm.tv/v0/subjects/"+bgmID+"/subjects", function(data){
-      var Chara_Data = data; function ArchiveMediaDetailsPageRelativeFiller(Tempj){
-        $.getJSON("https://api.bgm.tv/v0/subjects/"+data[Tempj].id, function(data2){
-          if(data2.name_cn!='') var Chara_Data_NameCN = data2.name_cn;else var Chara_Data_NameCN = Chara_Data[Tempj].name;
-          let ArchiveMediaDetailsRelativeImage = Chara_Data[Tempj].images.medium; if(!ArchiveMediaDetailsRelativeImage) ArchiveMediaDetailsRelativeImage="./assets/no_img.gif"; //如果没有图片就用默认图片
-          document.getElementsByName('ArchivePageContentDetailsRelativeBlockCard')[Tempj].innerHTML=( "<div id='ArchivePageContentDetailsRelativeBlockImg"+Tempj+"' style='position:relative;left:0%;top:0%;height:100%;aspect-ratio:1;background:url(\""+ArchiveMediaDetailsRelativeImage+"\") no-repeat top;background-size:cover;border-radius:8px;border-top-right-radius:0;border-bottom-right-radius:0;'></div>"+
-          "<div style='position:relative;margin-right:0%;margin-left:1%;margin-top:8px;height:100%;border-radius:8px;width: 100%;text-align: left;width:fit-content;padding:10px;padding-right:20px;white-space:nowrap;font-size:1.5vw;font-size:min(1.5vw, 21px);'><b>"+Chara_Data[Tempj].name+"<br/>("+Chara_Data_NameCN+")</b><br/>"+Chara_Data[Tempj].relation+"</div>")
-          $(document.getElementsByName('ArchivePageContentDetailsRelativeBlockCard')[Tempj]).attr('onclick','window.open(\"https://bgm.tv/subject/'+Chara_Data[Tempj].id+'\");');
-          switch(Chara_Data[Tempj].relation){
-            case '原声集':case '片头曲':case '片尾曲':case '角色歌':case '广播剧':case '插入歌':
-              {$("#ArchivePageContentDetailsRelativeBlockImg"+Tempj).append('<div style="position: absolute;right: 0;height: 30%;bottom: 0;background: #000000aa;border-top-left-radius: 9px;aspect-ratio: 1;display: flex;justify-content: center;align-items: center;/*backdrop-filter: blur(30px);*/"><svg t="1674916796215" class="icon" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="11808" style="height: 75%;"><path d="M405.333333 704m-192 0a192 192 0 1 0 384 0 192 192 0 1 0-384 0Z" fill="#e6e6e6" p-id="11809"></path><path d="M512 128v576h85.333333V298.666667l234.666667 64v-149.333334z" fill="#e6e6e6" p-id="11810"></path></svg></div>');break;}
-            case '书籍':case '单行本':
-              {$("#ArchivePageContentDetailsRelativeBlockImg"+Tempj).append('<div style="position: absolute;right: 0;height: 30%;bottom: 0;background: #000000aa;border-top-left-radius: 9px;aspect-ratio: 1;display: flex;justify-content: center;align-items: center;/*backdrop-filter: blur(30px);*/"><svg t="1674916763560" class="icon" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="9938" style="height: 65%;"><path d="M896 128v832H224a96 96 0 1 1 0-192h608V0H192C121.6 0 64 57.6 64 128v768c0 70.4 57.6 128 128 128h768V128h-64z" p-id="9939" fill="#e6e6e6"></path><path d="M224.064 832H224a32 32 0 0 0 0 64h607.968v-64H224.064z" p-id="9940" fill="#e6e6e6"></path></svg></div>');break;}
-            case '画集':
-              {$("#ArchivePageContentDetailsRelativeBlockImg"+Tempj).append('<div style="position: absolute;right: 0;height: 30%;bottom: 0;background: #000000aa;border-top-left-radius: 9px;aspect-ratio: 1;display: flex;justify-content: center;align-items: center;/*backdrop-filter: blur(30px);*/"><svg t="1674917033209" class="icon" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="15205" style="height: 65%;"><path d="M725.333333 938.666667H170.666667c-46.933333 0-85.333333-38.4-85.333334-85.333334V298.666667c0-25.6 17.066667-42.666667 42.666667-42.666667s42.666667 17.066667 42.666667 42.666667v512c0 21.333333 17.066667 42.666667 42.666666 42.666666h512c21.333333 0 42.666667 17.066667 42.666667 38.4v4.266667c0 21.333333-17.066667 42.666667-42.666667 42.666667z m-366.933333-170.666667C302.933333 768 256 721.066667 256 665.6V187.733333C256 132.266667 302.933333 85.333333 358.4 85.333333h477.866667C891.733333 85.333333 938.666667 132.266667 938.666667 187.733333v477.866667c0 55.466667-46.933333 102.4-102.4 102.4H358.4z m81.066667-85.333333H810.666667c21.333333-4.266667 38.4-21.333333 42.666666-42.666667v-128l-119.466666-106.666667-294.4 277.333334zM384 298.666667c0 46.933333 38.4 85.333333 85.333333 85.333333s85.333333-38.4 85.333334-85.333333-38.4-85.333333-85.333334-85.333334-85.333333 38.4-85.333333 85.333334z" p-id="15206" fill="#e6e6e6"></path></svg></div>');break;}  
-            case '游戏':
-              {$("#ArchivePageContentDetailsRelativeBlockImg"+Tempj).append('<div style="position: absolute;right: 0;height: 30%;bottom: 0;background: #000000aa;border-top-left-radius: 9px;aspect-ratio: 1;display: flex;justify-content: center;align-items: center;"><svg t="1704706924167" class="icon" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="13423" style="height: 65%;"><path d="M639.914667 213.333333a298.666667 298.666667 0 0 1 10.24 597.162667l-10.24 0.170667H384.085333a298.666667 298.666667 0 0 1-10.24-597.162667L384.085333 213.333333h255.829334z m-10.581334 320a53.333333 53.333333 0 1 0 0 106.666667 53.333333 53.333333 0 0 0 0-106.666667zM341.333333 384a32 32 0 0 0-31.701333 27.648l-0.298667 4.352v63.914667h-64a32 32 0 0 0-4.352 63.744l4.352 0.298666 64-0.042666v64.085333a32 32 0 0 0 63.701334 4.352l0.298666-4.352v-64.085333h64a32 32 0 0 0 4.352-63.658667l-4.352-0.298667-64-0.042666V416A32 32 0 0 0 341.333333 384z m373.333334 0a53.333333 53.333333 0 1 0 0 106.666667 53.333333 53.333333 0 0 0 0-106.666667z" fill="#ffffff" p-id="13424"></path></svg></div>');break;}    
-            case '衍生':case '不同版本':case '其他':case '不同演绎':case '不同世界观':
-              {$("#ArchivePageContentDetailsRelativeBlockImg"+Tempj).append('<div style="position: absolute;right: 0;height: 30%;bottom: 0;background: #000000aa;border-top-left-radius: 9px;aspect-ratio: 1;display: flex;justify-content: center;align-items: center;"><img src="./assets/Star-stroke.svg" alt="Specs" style="height: 65%;"/></div>');break;}    
-            case '续集':case '前传':case '主线故事':case '番外篇':case '总集篇':case '相同世界观':case '外传':
-              {$("#ArchivePageContentDetailsRelativeBlockImg"+Tempj).append('<div style="position: absolute;right: 0;height: 30%;bottom: 0;background: #000000aa;border-top-left-radius: 9px;aspect-ratio: 1;display: flex;justify-content: center;align-items: center;"><img src="./assets/anime.svg" alt="Specs" style="height: 65%;"/></div>');break;}    
-            }
-        }).done(function(){document.getElementById('ArchivePageContentDetailsBlur').style.height=(Math.min(document.getElementById('ArchivePageContentDetails').scrollHeight),(document.getElementById('ArchivePageContentLastCard').offsetTop)).toString()+'px';});
-      }
-      for(let Tempj=0;Tempj!=data.length;Tempj++){$("#ArchivePageContentDetailsRelativeBlock").append( "<div class='ArchiveCardCharacterHover' name='ArchivePageContentDetailsRelativeBlockCard'></div>");ArchiveMediaDetailsPageRelativeFiller(Tempj)}
-    }).done(function(){document.getElementById('ArchivePageContentDetailsBlur').style.height=(Math.min(document.getElementById('ArchivePageContentDetails').scrollHeight),(document.getElementById('ArchivePageContentLastCard').offsetTop)).toString()+'px';})
-    .fail(function() {OKErrorStreamer("Error","无法连接Bangumi",0); document.getElementById('ArchivePageContentDetailsBlur').style.height=(Math.min(document.getElementById('ArchivePageContentDetails').scrollHeight),(document.getElementById('ArchivePageContentLastCard').offsetTop)).toString()+'px';});
-    } else {$("#ArchivePageContentDetailsRelativeBlock").append("<div style='position:relative;margin:auto;margin-bottom:5%;font-family:bgmUIHeavy;color: rgba(255, 255, 255, 0.5);font-size:3.5vmin'>相关条目信息已隐藏</div>")}
-
-  //?填充作品制作人员
-  if(sysdata.get("Settings.checkboxB.LocalStorageMediaShowStaff")){ //判断是否显示制作人员信息
-    $.getJSON("https://api.bgm.tv/v0/subjects/"+bgmID+"/persons", function(data){
-      var Chara_Data = data; function ArchiveMediaDetailsPagePersonFiller(Tempj){
-        $.getJSON("https://api.bgm.tv/v0/persons/"+data[Tempj].id, function(data2){
-          if(Chara_Data[Tempj].images.medium!=''){
-          if(data2.infobox!=''&&data2.infobox[0].key=='简体中文名') var Chara_Data_NameCN = data2.infobox[0].value;else var Chara_Data_NameCN = Chara_Data[Tempj].name;
-          $("#ArchivePageContentDetailsPersonBlock").append( "<div class='ArchiveCardCharacterHover' onclick='window.open(\"https://bgm.tv/person/"+Chara_Data[Tempj].id+"\");'>"+
-          "<div style='position:relative;left:0%;top:0%;height:100%;aspect-ratio:1;background:url(\""+Chara_Data[Tempj].images.medium+"\") no-repeat top;background-size:cover;border-radius:8px;border-top-right-radius:0;border-bottom-right-radius:0;'></div>"+
-          "<div style='position:relative;margin-right:0%;margin-left:1%;margin-top:8px;height:100%;border-radius:8px;width: 100%;text-align: left;width:fit-content;padding:10px;padding-right:20px;white-space:nowrap;font-size:1.5vw;font-size:min(1.5vw, 21px);'><b>"+Chara_Data[Tempj].name+"<br/>("+Chara_Data_NameCN+")</b><br/>"+Chara_Data[Tempj].relation+"</div></div>")
-        }}).done(function(){document.getElementById('ArchivePageContentDetailsBlur').style.height=(Math.min(document.getElementById('ArchivePageContentDetails').scrollHeight),(document.getElementById('ArchivePageContentLastCard').offsetTop)).toString()+'px';});
-      }
-      for(let Tempj=0;Tempj!=data.length;Tempj++){ArchiveMediaDetailsPagePersonFiller(Tempj)}
-    }).done(function(){document.getElementById('ArchivePageContentDetailsBlur').style.height=(Math.min(document.getElementById('ArchivePageContentDetails').scrollHeight),(document.getElementById('ArchivePageContentLastCard').offsetTop)).toString()+'px';})
-    .fail(function() {OKErrorStreamer("Error","无法连接Bangumi",0); document.getElementById('ArchivePageContentDetailsBlur').style.height=(Math.min(document.getElementById('ArchivePageContentDetails').scrollHeight),(document.getElementById('ArchivePageContentLastCard').offsetTop)).toString()+'px';});
-    } else {$("#ArchivePageContentDetailsPersonBlock").append("<div style='position:relative;margin:auto;margin-bottom:5%;font-family:bgmUIHeavy;color: rgba(255, 255, 255, 0.5);font-size:3.5vmin'>制作人员信息已隐藏</div>")}
-
   //?填充科学排名
   if(sysdata.get("Settings.checkboxB.LocalStorageMediaShowSciMark")){ //判断是否显示科学排名
     document.getElementById("ArchivePageContentDetailsRatingRank").innerText="计算中...";
@@ -1378,6 +1207,12 @@ function ArchiveMediaDetailsPage(MediaID){
   
   //?扫描特典
   ArchiveMediaBonusScan(store.get("WorkSaveNo"+MediaID+".URL"),MediaID);
+  const folderButton=document.getElementById('ArchivePageContentDetailsFolderURL');
+  folderButton.removeAttribute('onclick');
+  folderButton.onclick=async()=>{
+    const error=await shell.openPath(store.get('WorkSaveNo'+MediaID+'.URL'));
+    if(error)OKErrorStreamer('Error','无法打开文件夹：'+error,0);
+  };
 
   //页面内容填充
   console.log(MediaID);
@@ -1399,8 +1234,6 @@ function ArchiveMediaDetailsPage(MediaID){
     for (let i = 0; i < document.getElementsByClassName("RecentViewDetail").length; i++) {
       document.getElementsByClassName("RecentViewDetail")[i].style.backdropFilter = "brightness(1)";
     }
-    document.getElementsByClassName("ArchivePageContentDetailsCharacterContainer")[0].style.backdropFilter = "brightness(1)";
-    document.getElementsByClassName("ArchivePageContentDetailsCharacterContainer")[1].style.backdropFilter = "brightness(1)";
   }
   //贴边控制
   document.getElementById("ArchivePageContentDetailsTitle").style.left=(22+(document.getElementById("ArchivePageContentDetailsCover").getBoundingClientRect().width)/($(window).width())*100).toString()+"%"; // 控制标题贴边
@@ -1412,127 +1245,6 @@ function ArchiveMediaDetailsPage(MediaID){
   //返回按钮显示
   document.getElementById('GoBackPage').style.display = 'block';
   setTimeout(function() {document.getElementById('GoBackPage').style.height = '45px';},100); // 返回按钮可见化
-
-  //显示页尾一言
-  $.getJSON("https://v1.hitokoto.cn/?c=a", function(data3){
-    document.getElementById('ArchivePageContentLastCardHitokoto').innerText='『'+data3.hitokoto+'』';
-    document.getElementById('ArchivePageContentLastCardHitokotoFrom').innerText='——'+data3.from})
-  
-    if(sysdata.get("Settings.checkboxB.LocalStorageMediaShowTranslation")){ //判断是否显示翻译按钮
-    document.getElementById('ArchivePageContentDetailsTranslate').style.display='grid'}
-    else{document.getElementById('ArchivePageContentDetailsTranslate').style.display='none'}
-
-  //?填充作品相关目录
-  $.ajax({ //获取收藏信息
-    url: "https://bgm.tv/subject/"+bgmID,
-    type: 'GET',
-    timeout : 2000,
-    success: function (data) {
-      let bgmTempHTML = cheerio.load(data); //加载获取的作品详情页html
-      if(!bgmTempHTML('#subjectPanelIndex').length) return -1; //判断是否有目录
-      bgmTempHTML = bgmTempHTML('#subjectPanelIndex')[0].children[3].children //解析目录部分
-      // console.log(bgmTempHTML)
-      for (let Tempi = 0;Tempi!=bgmTempHTML.length;Tempi++){
-      if (Tempi%2==1){
-        // console.log(bgmTempHTML[Tempi].children[2].children[0].attribs.href)
-        $("#ArchivePageContentDetailsContentBlock").append( "<div class='ArchiveCardCharacterHover' onclick='window.open(\"https://bgm.tv"+bgmTempHTML[Tempi].children[2].children[0].attribs.href+"\");'>"+
-        "<div style='position:relative;left:0%;top:0%;height:100%;aspect-ratio:1;background:url(\"https:"+bgmTempHTML[Tempi].children[0].children[0].attribs.style.slice(22,-2)+"\") no-repeat top;background-size:cover;border-radius:8px;border-top-right-radius:0;border-bottom-right-radius:0;'></div>"+
-        "<div style='position:relative;margin-right:0%;margin-left:1%;margin-top:8px;height:100%;border-radius:8px;width: 100%;text-align: left;width:fit-content;padding:10px;padding-right:20px;white-space:nowrap;font-size:1.5vw;font-size:min(1.5vw, 21px);'><b>"+
-        bgmTempHTML[Tempi].children[2].children[0].children[0].data+"<br/>by</b><br/>"+bgmTempHTML[Tempi].children[2].children[3].children[1].children[0].data+"</div></div>")
-      }
-    }
-    //页面背景高度更新
-    document.getElementById('ArchivePageContentDetailsBlur').style.height=(Math.min(document.getElementById('ArchivePageContentDetails').scrollHeight),(document.getElementById('ArchivePageContentLastCard').offsetTop)).toString()+'px';
-    }, error: function () {$("#ArchivePageContentDetailsContentBlock").append('<div style="margin:auto;margin-bottom: 30px;">抱歉，无法加载目录</div>')}
-  });
-
-  //?填充作品分享按钮
-  $('#ArchivePageContentDetailsShare').attr('onclick',"ipcRenderer.send('MediaShare','"+store.get("WorkSaveNo"+MediaID+".WorkSaveNo").replace(/[^0-9]/g, '')+"')");
-
-  //?填充作品好友评价
-  $.ajax({ //获取用户信息
-    url: "https://api.bgm.tv/v0/me",type: 'GET',headers: {"Authorization": "Bearer "+ sysdata.get('UserData.UserToken')},timeout : 2000,
-    success: function (data) {
-      $.ajax({ //获取好友信息
-        url: "https://bgm.tv/user/"+data.username+"/friends",
-        type: 'GET',
-        timeout : 2000,
-        success: function (data2) {
-          var bgmTempHTML1 = cheerio.load(data2); //加载个人详情页html
-          bgmTempHTML1 = bgmTempHTML1('#memberUserList')//解析好友列表
-          var bgmTempScore = []; //定义好友评分数组
-          var bgmTempCounter = 0; //定义好友计数器
-          //! 定义好友填充函数
-          function ArchiveMediaDetailsPageFriendFiller(Tempfriendcalc){
-            $.ajax({ //获取好友收藏信息
-              url: "https://api.bgm.tv/v0/users/"+bgmTempHTML1[0].children[Tempfriendcalc].children[1].children[1].children[1].attribs.href.slice(6)+"/collections/"+bgmID,
-              type: 'GET',
-              timeout : 2000,
-              success: function (data2) {
-                let rating='暂无评价';
-                switch (data2.rate) {
-                  case 10:rating = '超神作';break;case 9:rating = '神作';break;case 8:rating = '力荐';break;case 7:rating = '推荐';break;case 6:rating = '还行';break;
-                  case 5:rating = '不过不失';break;case 4:rating = '较差';break;case 3:rating = '差';break;case 2:rating = '很差';break;case 1:rating = '不忍直视';break;
-                  default:rating = '暂无评价';
-                }
-                $("#ArchivePageContentDetailsFriendsInfo").append( "<div class='ArchiveCardCharacterHover'style='height: 100%;margin: 0;margin-right: 20px;flex:unset'"+
-                "onclick=\"ArchiveMediaDetailsFriendRankCard('"+data2.comment+"','"+data2.rate+"','"+rating+"','"+bgmTempHTML1[0].children[Tempfriendcalc].children[1].children[1].children[1].children[2].data+"','"+
-                bgmTempHTML1[0].children[Tempfriendcalc].children[1].children[1].children[1].attribs.href.slice(6)+"','"+bgmTempHTML1[0].children[Tempfriendcalc].children[1].children[1].children[1].children[1].children[1].attribs.style.slice(22,-2)+"','0',"+bgmID+")\""+
-                "><div style='position:relative;left:0%;top:0%;height:100%;aspect-ratio:1;background:url(\"https:"+bgmTempHTML1[0].children[Tempfriendcalc].children[1].children[1].children[1].children[1].children[1].attribs.style.slice(22,-2)+"\") no-repeat top;background-size:cover;border-radius:8px;border-top-right-radius:0;border-bottom-right-radius:0;'></div>"+
-                "<div style='position:relative;margin-right:0%;margin-left:1%;margin-top:8px;height:100%;border-radius:8px;width: 100%;text-align: left;width:fit-content;padding:10px;padding-right:20px;white-space:nowrap;font-size:1.5vw;font-size: min(1.5vmin, 21px);'>"+
-                "<b>"+bgmTempHTML1[0].children[Tempfriendcalc].children[1].children[1].children[1].children[2].data+"&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;"+rating+"<br>⭐ "+data2.rate+"</b><br>"+data2.updated_at.slice(0,-9).replace('T', ' ')+"</div></div>")
-                bgmTempScore.push(data2.rate);bgmTempCounter+=1; //好友评分数组填充
-                if(bgmTempCounter==0) $("#ArchivePageContentDetailsFriendsInfo").append('<div style="margin:auto;">暂无好友看过</div>')
-                if(bgmTempCounter==bgmTempHTML1[0].children.length){
-                  document.getElementById('ArchivePageContentDetailsFriendNum').innerHTML = "共"+bgmTempScore.length+"位好友看过";
-                  //计算好友打分平均值
-                  let bgmTempScoreNoZero = bgmTempScore.filter(function(value) {return value != 0;});
-                  let bgmTempScoreAvg = ((bgmTempScoreNoZero.reduce(function(a, b) {return a + b;}, 0)/ bgmTempScoreNoZero.length).toFixed(1));
-                  document.getElementById('ArchivePageContentDetailsFriendScore').innerHTML = bgmTempScoreAvg;
-                  switch (parseInt(bgmTempScoreAvg+0.5)) {
-                    case 10:rating = '超神作';break;case 9:rating = '神作';break;case 8:rating = '力荐';break;case 7:rating = '推荐';break;case 6:rating = '还行';break;
-                    case 5:rating = '不过不失';break;case 4:rating = '较差';break;case 3:rating = '差';break;case 2:rating = '很差';break;case 1:rating = '不忍直视';break;
-                    default:rating = '暂无评价';}
-                  document.getElementById('ArchivePageContentDetailsFriendRank').innerHTML = rating;
-                  // 计算每个数字与平均值的差的平方
-                  let bgmTempScoreDiffs = bgmTempScoreNoZero.map(function(value) { let diff = value - bgmTempScoreAvg;let sqrDiff = diff * diff;return sqrDiff;});
-                  // 计算平方差的平均值
-                  let bgmTempScoreavgDiff = bgmTempScoreDiffs.reduce(function(a, b) {return a + b;}, 0) / bgmTempScoreDiffs.length;
-                  // 计算标准差
-                  document.getElementById('ArchivePageContentDetailsFriendStd').innerHTML = "标准差："+Math.sqrt(bgmTempScoreavgDiff).toFixed(2);
-                }
-              },
-              error: function(jqXHR, textStatus, errorThrown) {bgmTempCounter+=1;
-                if(bgmTempCounter==0) $("#ArchivePageContentDetailsFriendsInfo").append('<div style="margin:auto;">暂无好友看过</div>')
-                if(bgmTempCounter==bgmTempHTML1[0].children.length){
-                  document.getElementById('ArchivePageContentDetailsFriendNum').innerHTML = "共"+bgmTempScore.length+"位好友看过";
-                  //计算好友打分平均值
-                  let bgmTempScoreNoZero = bgmTempScore.filter(function(value) {return value != 0;});
-                  let bgmTempScoreAvg = ((bgmTempScoreNoZero.reduce(function(a, b) {return a + b;}, 0)/ bgmTempScoreNoZero.length).toFixed(1));
-                  document.getElementById('ArchivePageContentDetailsFriendScore').innerHTML = bgmTempScoreAvg;
-                  switch (parseInt(bgmTempScoreAvg+0.5)) {
-                    case 10:rating = '超神作';break;case 9:rating = '神作';break;case 8:rating = '力荐';break;case 7:rating = '推荐';break;case 6:rating = '还行';break;
-                    case 5:rating = '不过不失';break;case 4:rating = '较差';break;case 3:rating = '差';break;case 2:rating = '很差';break;case 1:rating = '不忍直视';break;
-                    default:rating = '暂无评价';}
-                  document.getElementById('ArchivePageContentDetailsFriendRank').innerHTML = rating;
-                  // 计算每个数字与平均值的差的平方
-                  let bgmTempScoreDiffs = bgmTempScoreNoZero.map(function(value) { let diff = value - bgmTempScoreAvg;let sqrDiff = diff * diff;return sqrDiff;});
-                  // 计算平方差的平均值
-                  let bgmTempScoreavgDiff = bgmTempScoreDiffs.reduce(function(a, b) {return a + b;}, 0) / bgmTempScoreDiffs.length;
-                  // 计算标准差
-                  document.getElementById('ArchivePageContentDetailsFriendStd').innerHTML = "标准差："+Math.sqrt(bgmTempScoreavgDiff).toFixed(2);
-                }
-              }
-            });
-          }
-
-          for (var Tempfriendcalc = 0;Tempfriendcalc!=bgmTempHTML1[0].children.length;Tempfriendcalc++) ArchiveMediaDetailsPageFriendFiller(Tempfriendcalc);
-        }, error: function () {$("#ArchivePageContentDetailsFriendsInfo").append('<div style="margin:auto;">抱歉，无法加载好友</div>')}
-      });
-  },
-  error: function(jqXHR, textStatus, errorThrown) {
-    $("#ArchivePageContentDetailsFriendsInfo").append('<div style="margin:auto;">抱歉，无法加载好友</div>');
-  }});
 
 }
 
@@ -1569,7 +1281,7 @@ function ArchiveMediaDetailsFriendRankCard(friend_comment,friend_score,friend_ra
 }
 
 //! 媒体库-作品详情页章节选择弹窗 媒体库-作品详情页章节选择并播放
-const { ArchiveMediaDetailsEpInfoCard,ArchiveMediaDetailsEpInfoPlayer,ArchiveMediaDetailsEpInfoCardWatched } 
+let { ArchiveMediaDetailsEpInfoCard,ArchiveMediaDetailsEpInfoPlayer,ArchiveMediaDetailsEpInfoCardWatched }
 = nodeRequire('./js/Mainpage_Modules/MainpageArchiveDetailsSelectandPlay.js'); //?引入bgm.res主界面的作品详情页章节选择播放函数封装
 
 //! 媒体库-作品详情页章节界面-自动分页章节渲染模块
@@ -1733,3 +1445,21 @@ window.onerror = function(message, source, lineno, colno, error) {
   // 在这里处理异常，例如记录日志或显示用户友好的错误消息
   return false; // 返回 true 表示阻止默认的错误处理（例如在控制台中输出错误）
 };
+// Keep original UI and feature functions; adapt only bound media data.
+const RenameBoundPlayer = RenameBindingBridge.wrapPlayer(ArchiveMediaDetailsEpInfoPlayer,{store,dialog});
+ArchiveMediaDetailsEpInfoPlayer = RenameBoundPlayer;
+
+let boundMetadataRefresh;
+ipcRenderer.on('library:updated',()=>{clearTimeout(boundMetadataRefresh);boundMetadataRefresh=setTimeout(()=>store.update().then(()=>{
+  for(const [key,work]of Object.entries(store.get())){
+    if(!/^WorkSaveNo\d+$/.test(key))continue;
+    const card=document.getElementById('ArchiveWorkNo'+key.slice(10));if(!card)continue;
+    if(work.Cover)card.style.backgroundImage='url("'+work.Cover+'")';
+    const title=card.querySelector('.ArchiveCardTitle');if(title)title.textContent=work.Name;
+    const score=card.querySelector('.ArchiveCardRateStar');if(score)score.textContent='★ '+work.Score;
+  }
+}),800);});
+
+if (process.env.BGM_SCROLL_DIAGNOSTICS === '1') {
+  nodeRequire('./js/scroll-diagnostics.cjs').install({document,window});
+}

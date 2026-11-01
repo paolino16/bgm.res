@@ -63,7 +63,7 @@ exports.ArchiveMediaDetailsAutoPageEpisodes = function (MediaID){
             box-shadow:0px 0px 0px 0px #ffffff4a; background-color:rgb(0,0,0,0.3);
             cursor: pointer; box-sizing: border-box;
         `; // Apply necessary styles directly or via CSS class
-        btn.textContent = `${item.type} ${item.number}`;
+        btn.textContent = `${item.type} ${store.get(`WorkSaveNo${MediaID}.${item.type}Details.${item.type}${item.number}.EpisodeNumber`) || item.number}`;
         // Keep original onclick
         btn.onclick = (event) => ArchiveMediaDetailsEpInfoCard(event, MediaID, item.number, item.type);
   
@@ -79,68 +79,22 @@ exports.ArchiveMediaDetailsAutoPageEpisodes = function (MediaID){
 }
 
 exports.ArchiveMediaDetailsAutoPageAction = function (){
-    const paginationWrapper = document.getElementById("ArchivePageContentDetailsEpisodePaginationWrapper");
-    if (!paginationWrapper) {return;}
-    paginationWrapper.innerHTML = ""; // 清空分页容器
-    paginationWrapper.removeEventListener('wheel', handleEpisodeScroll); // Remove previous listener if any
-    
-    // 3. 分页填充
-    if (episodeElements.length > 0) {
-        // Calculate items per page (based on 2 rows)
-        // Need to wait for the container to be visible and have width
-        setTimeout(() => {
-            const wrapperWidth = paginationWrapper.offsetWidth || paginationWrapper.clientWidth;
-            if (wrapperWidth > 0) {
-                const itemMinWidth = 110; // From CSS minmax(110px, 1fr)
-                const itemGap = 25; // From CSS grid-gap column gap
-                const itemsPerRow = Math.max(1, Math.floor((wrapperWidth - 40 + itemGap) / (itemMinWidth + itemGap))); // Adjusted calculation considering padding
-                const itemsPerPage = itemsPerRow * 2; // Two rows per page
-  
-                paginationWrapper.innerHTML = ""; // Clear again just in case
-  
-                let currentPage = null;
-                for (let i = 0; i < episodeElements.length; i++) {
-                    if (i % itemsPerPage === 0) {
-                        currentPage = document.createElement('div');
-                        currentPage.className = 'ArchivePageContentDetailsEpisodePage';
-                        paginationWrapper.appendChild(currentPage);
-                    }
-                    // Check if currentPage exists before appending
-                    if (currentPage) {
-                        currentPage.appendChild(episodeElements[i]);
-                    } else {
-                        console.error("Failed to create episode page element.");
-                        break; // Stop if page creation fails
-                    }
-                }
-                // Add wheel scroll listener
-                paginationWrapper.addEventListener('wheel', handleEpisodeScroll, { passive: false });
-            } else {
-                // Handle case where width is still 0 (e.g., container hidden)
-                paginationWrapper.innerHTML = "<div style='color: #888; text-align: center; width: 100%; padding: 20px;'>无法计算分页，容器宽度为0</div>";
-            }
-            // Adjust blur height after pagination is potentially calculated
-            document.getElementById('ArchivePageContentDetailsBlur').style.height = (document.getElementById('ArchivePageContentLastCard').offsetTop).toString() + 'px';
-        }, 50); // Delay slightly for layout calculation
-  
-    } else {
-        // 如果没有章节
-        paginationWrapper.innerHTML = "<div style='color: #888; text-align: center; width: 100%; padding: 20px;'>暂无章节信息</div>";
-        // Adjust blur height even if no episodes
-        setTimeout(() => {
-            document.getElementById('ArchivePageContentDetailsBlur').style.height = (document.getElementById('ArchivePageContentLastCard').offsetTop).toString() + 'px';
-        }, 50);
+    const wrapper = document.getElementById('ArchivePageContentDetailsEpisodePaginationWrapper');
+    if (!wrapper) return;
+    wrapper.innerHTML = '';
+    wrapper.removeEventListener('wheel', handleEpisodeScroll);
+    if (!episodeElements.length) {
+        wrapper.innerHTML = "<div class='episode-empty'>暂无章节信息</div>";
+        return;
     }
-}
+    const grid = document.createElement('div');
+    grid.className = 'ArchivePageContentDetailsEpisodePage';
+    for (const button of episodeElements) grid.appendChild(button);
+    wrapper.appendChild(grid);
+};
 
 //! 处理滚轮事件的函数
-exports.handleEpisodeScroll = function (event) {
-    const wrapper = document.getElementById('ArchivePageContentDetailsEpisodePaginationWrapper');
-    if (!wrapper || wrapper.scrollWidth <= wrapper.clientWidth) return; // Don't interfere if no scroll needed
-
-    event.preventDefault(); // Prevent default vertical page scroll
-    const scrollAmount = wrapper.clientWidth * 0.8; // Scroll slightly less than a full page for better feel
-    // Determine direction based on deltaY (vertical scroll) or deltaX (horizontal, less common)
-    let direction = Math.sign(event.deltaY !== 0 ? event.deltaY : event.deltaX);
-    wrapper.scrollBy({ left: direction * scrollAmount, behavior: 'smooth' });
-}
+exports.handleEpisodeScroll = function(event) {
+ const wrapper=document.getElementById('ArchivePageContentDetailsEpisodePaginationWrapper');
+ if(wrapper)require('../horizontal-scroll.cjs').handleHorizontalWheel(event,wrapper);
+};

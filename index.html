@@ -5,6 +5,8 @@
     <link rel="stylesheet" href="./includes/style.css"> <!--主界面样式表-->
     <link rel="stylesheet" href="./includes/stars.css"> <!--评分模块样式表-->
     <link rel="stylesheet" href="./includes/winui3.css" type="text/css" /> <!--外挂Winui3样式表(设置界面)-->
+    <link rel="stylesheet" href="./includes/desktop.css">
+    <link rel="stylesheet" href="./includes/scroll-performance.css">
     <meta charset="UTF-8">
     <title>bgm.res</title>
     <style>
@@ -156,7 +158,7 @@
             document.getElementById('ArchivePageSearch').style.borderBottomLeftRadius='7px';document.getElementById('ArchivePageSearch').style.borderBottomRightRadius='7px';"></div>
 
             <!--媒体库功能切换-->
-            <div style="height: 35px;position: fixed;left: max(18%, 220px);right: 2%;top: 125px;z-index: 13;border-radius: 7px;display: grid;justify-items: center;animation: Ascent-Fonts .7s cubic-bezier(0,0,0.2,1);">
+            <div class="desktop-library-tabs" style="height: 35px;position: fixed;left: max(18%, 220px);right: 2%;top: 125px;z-index: 13;border-radius: 7px;display: grid;justify-items: center;animation: Ascent-Fonts .7s cubic-bezier(0,0,0.2,1);">
                 <div style="width: 400px;height: 35px;border-radius: 7px;background: #3d3d3d50;margin-right: 5px;display: flex;align-items: center;justify-content: space-evenly;backdrop-filter: blur(10px);">
                     <div id="ArchivePageSwitchTab1" class="ArchivePageSwitchTab" onclick="ArchivePageSwitch(1)"><img src="./assets/ArchivePageTab/recent.svg" style="height:18px;aspect-ratio:1" />最近播放</div>
                     <div id="ArchivePageSwitchTab2" class="ArchivePageSwitchTab" onclick="ArchivePageSwitch(2)"><img src="./assets/ArchivePageTab/合集.svg" style="height:16px;aspect-ratio:1" />作品合集</div>
@@ -283,49 +285,6 @@
                     <button type="button" value="了解如何播放BDMV" class="Winui3button" onclick="shell.openExternal('https://blog.xial.moe/index.php/2023/07/24/bd-yuanpanshiyongfangfa/');">了解更多</button>
                 </div>
 
-                <!--作品个人收藏情况-->
-                <div id='ArchivePageContentDetailsSelfRankBlock' class="RecentViewDetail" style="position:relative;width: 76%;height:7%;margin-top:6.5%;left:max(18%,195px);right:4%;bottom:auto;margin-bottom:15px;padding: 1.1%;-webkit-app-region:unset;backdrop-filter: blur(50px);background-color: rgba(0, 0, 0, 0.2);align-items: center;display: flex;flex-direction: row-reverse;justify-content: space-between;"> 
-                    <div id="ArchivePageContentDetailsSelfRankBlockDate" style="position: relative;width: auto;margin-right: 20px;font-size: 2.5vmin;text-overflow: ellipsis;white-space: nowrap;">收藏日期：未知</div>
-                    <div id="ArchivePageContentDetailsSelfRankBlockStars" style="position: relative;margin-right: 20px;align-items: center;display: flex;width: auto;height: 60%;">
-                        <div id="ArchivePageContentDetailsSelfRankBlockRate" style="position: relative;width: auto;margin-right: 12px;font-size: 2.5vmin;text-overflow: ellipsis;white-space: nowrap;">未评分</div>
-                        <span name="ArchivePageContentDetailsSelfRankBlockStars" class="ArchivePageContentDetailsfull-star"></span>
-                        <span name="ArchivePageContentDetailsSelfRankBlockStars" class="ArchivePageContentDetailsfull-star"></span>
-                        <span name="ArchivePageContentDetailsSelfRankBlockStars" class="ArchivePageContentDetailsfull-star"></span>
-                        <span name="ArchivePageContentDetailsSelfRankBlockStars" class="ArchivePageContentDetailsfull-star"></span>
-                        <span name="ArchivePageContentDetailsSelfRankBlockStars" class="ArchivePageContentDetailsfull-star"></span>
-                    </div>
-                    <div id="ArchivePageContentDetailsSelfRankBlockComment" style="position: relative;width: 25%;;margin-right: 30px;font-size: 2.5vmin;overflow: hidden;text-overflow: ellipsis;white-space: nowrap;"></div>
-                    <select class="Winui3selectMenu" id="ArchivePageContentDetailsSelfRankBlockState" style="margin-left: 20px;height: 80%; aspect-ratio: 4;width: 140px;font-size: 2.5vmin;position: relative;">
-                        <option value="wish">想看</option><option value="do">在看</option><option value="collect">看过</option>
-                        <option value="on_hold">搁置</option><option value="dropped">抛弃</option><option value="uncollect">未收藏</option>
-                    </select>
-                </div>
-                <!--作品好友评价-->
-                <div id='ArchivePageContentDetailsFriendRankBlock' class="RecentViewDetail" style="position:relative;width: 76%;height:8%;margin-top:2%;left:max(18%,195px);right:4%;bottom:auto;margin-bottom:15px;padding: 1.1%;-webkit-app-region:unset;backdrop-filter: blur(50px);background-color: rgba(0, 0, 0, 0.2);align-items: center;display: flex;flex-direction: row;justify-content: space-between;overflow: hidden;"> 
-                    <div id="ArchivePageContentDetailsShare" style="display: flex;flex-direction: row;justify-content: space-between;height: 100%;align-items: center;">
-                        <div class="ArchiveCardCharacterHover" onclick="" title="分享" style="height: 80%; position: relative;width: auto;aspect-ratio: 1;right: unset;bottom: unset;">
-                            <div style="width: 100%;height: 100%;position: absolute;background: url('./assets/sharemedia.svg') center no-repeat;transform: scale(1.5);"></div>
-                        </div>
-                        <div style="display: flex;flex-direction: column;justify-content: space-between;">
-                            <div id="ArchivePageContentDetailsFriendNum" style="position: relative;width: auto;margin-left: 10px;font-size: 2.5vmin;text-overflow: ellipsis;white-space: nowrap;">还没有好友看过</div>
-                            <div id="ArchivePageContentDetailsFriendStd" style="position: relative;width: auto;margin-left: 10px;font-size: 2.5vmin;text-overflow: ellipsis;white-space: nowrap;">暂无标准差</div>
-                        </div>
-                    </div>
-                    <div id="ArchivePageContentDetailsFriendsInfo" class="ArchivePageContentDetailsFriends"></div>
-                    <div style="display: flex;flex-direction: row;">
-                        <div style="display: flex;flex-direction: column;margin-top:5%;margin-bottom:5%;justify-content: space-between;align-items: center;margin-right: 10px;">
-                            <div style="position: relative;width: auto;margin-right: 10%;font-size: 2.3vmin;text-overflow: ellipsis;white-space: nowrap;margin-bottom: 10%;">好友评分</div>
-                            <div id="ArchivePageContentDetailsFriendRank" class="boxBlank" style="background-color: rgba(0, 0, 0, 0.292);font-size: 2vmin;font-family:bgmUI;width: 100%;margin-right: 10%;backdrop-filter: blur(10px);box-shadow:none;display: flex;justify-content: center;align-items: center;position: relative;padding: 4%;">暂无评价</div>
-                        </div>
-                        <div id="ArchivePageContentDetailsFriendScore" style="position: relative;margin-right: 20px;font-size: 6vmin;text-overflow: ellipsis;white-space: nowrap;font-style: italic;font-family: bgmUIHeavy;display: flex;align-items: center;">-.-</div>
-                    </div>
-                </div>
-                <!--作品简介-->
-                <div class="RecentViewDetail" style="position:relative;width: 76%;height:auto;margin-top:2%;left:max(18%,195px);right:4%;bottom:auto;margin-bottom:15px;padding: 1.1%;-webkit-app-region:unset;backdrop-filter: blur(50px);background-color: rgba(0, 0, 0, 0.2);"> <!--top:45%;-->
-                    <div class='RecentViewName' style='top:5px;font-size:3vw;font-size:min(3vw,35px);left: 1%;position: relative;margin-bottom: 20px;'>简介<div id='ArchivePageContentDetailsTranslate' title="Google翻译" style='top:0;font-size:3vw;font-size:min(3vw,35px);right: 3%;position: absolute;display: none;align-content: space-evenly;height: 100%;' onclick="OKErrorStreamer('MessageOn','Google翻译中...',0);  $.ajax({ //获取用户信息
-                        url: 'https://google-translate-proxy.tantu.com/translate_a/single?client=gtx&dt=t&dj=1&ie=UTF-8&sl=auto&tl=zh_CN&q='+document.getElementById('ArchivePageContentDetailsDetailsBlock').innerText.replaceAll('<',''), 
-                        type: 'GET',timeout : 2000,success: function(data){document.getElementById('ArchivePageContentDetailsDetailsBlock').innerText='';for(let Temp=0;Temp!=data.sentences.length;Temp++){$('#ArchivePageContentDetailsDetailsBlock').append(data.sentences[Temp].trans+'<br/>')}}}).done(function() { OKErrorStreamer('MessageOff','',0);OKErrorStreamer('OK','翻译完成',0);}).fail(function(){OKErrorStreamer('MessageOff','',0);OKErrorStreamer('Error','无法连接Google翻译',0);})"><svg t="1674619588292" class="icon" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="4393" width="30" height="30"><path d="M128 42.666667C80.64 42.666667 42.666667 80.64 42.666667 128L42.666667 725.333333C42.666667 772.693333 80.64 810.666667 128 810.666667L640 810.666667 384 42.666667 128 42.666667M526.506667 213.333333 554.666667 298.666667 896 298.666667 896 896 528.213333 896 555.946667 981.333333 896 981.333333C943.36 981.333333 981.333333 943.36 981.333333 896L981.333333 298.666667C981.333333 251.306667 943.36 213.333333 896 213.333333L526.506667 213.333333M301.226667 252.16C348.16 252.16 387.84 269.226667 417.28 298.666667L369.493333 342.613333C357.12 330.24 335.786667 316.16 301.226667 316.16 241.92 316.16 194.56 364.8 194.56 424.106667 194.56 483.413333 241.92 533.333333 301.226667 533.333333 370.346667 533.333333 395.093333 483.413333 400.213333 458.666667L301.226667 458.666667 301.226667 400.213333 464.213333 400.213333C466.346667 410.026667 466.773333 416.853333 466.773333 429.226667 466.773333 528.213333 400.213333 597.333333 301.226667 597.333333 205.226667 597.333333 128 520.106667 128 424.106667 128 327.68 205.226667 252.16 301.226667 252.16M682.666667 426.666667 682.666667 469.333333 611.84 469.333333 625.493333 512 768 512C756.48 538.026667 752.213333 561.92 717.226667 602.88 700.16 582.826667 686.506667 565.333333 682.666667 554.666667L640 554.666667C645.12 573.013333 666.453333 601.6 692.053333 630.613333 686.506667 636.16 678.826667 643.413333 672 649.386667L683.946667 685.226667C694.613333 675.84 705.28 666.026667 715.946667 656.213333 759.466667 701.866667 805.546667 744.106667 805.546667 744.106667L829.44 718.506667C829.44 718.506667 783.786667 673.706667 742.826667 629.333333 769.706667 599.466667 793.6 563.2 810.666667 512L853.333333 512 853.333333 469.333333 725.333333 469.333333 725.333333 426.666667 682.666667 426.666667Z" p-id="4394" fill="#e6e6e6"></path></svg></div></div>
-                    <div id="ArchivePageContentDetailsDetailsBlock" style="margin:10px"></div></div> 
                 <!--作品章节-->
                 <div id='ArchivePageContentDetailsEpisodeBlockContainer' class="RecentViewDetail" style="position:relative;width: 76%;/*height:40%;*/height:auto;margin-top:2%;left:max(18%,195px);right:4%;bottom:auto;margin-bottom:15px;padding: 1.1%;padding-bottom:2%;-webkit-app-region:unset;backdrop-filter: blur(50px);background-color: rgba(0, 0, 0, 0.2);overflow: hidden;color:#d0d0d0"> <!--top:84%;-->
                     <div class='RecentViewName' style='top:5px;font-size:3vw;font-size:min(3vw,35px);left: 1%;position: relative;height:auto'>章节</div>
@@ -342,33 +301,15 @@
                     <div id="ArchivePageContentDetailsEpisodeBlockUnfoldContainer" style="position:absolute;height:20%;width:100%;bottom:0%;left:0%;background:linear-gradient(180deg, transparent, #00000098);transition: all .5s ease;    transform: scale(1.02);display:none">
                     <svg id='ArchivePageContentDetailsEpisodeBlockUnfolder' t="1671722573107" class="icon" viewBox="0 0 1026 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="2680" data-darkreader-inline-fill="" style="position: absolute;bottom: 5px;left: 0;right: 0;width: 28px;margin:auto;transition: all .6s ease;" onclick="ArchivePageContentDetailsEpisodeBlockUnfoldFunc()"><path d="M857.088 224.256q28.672-28.672 69.12-28.672t69.12 28.672q29.696 28.672 29.696 68.608t-29.696 68.608l-382.976 380.928q-12.288 14.336-30.72 19.968t-38.912 4.608-40.448-8.704-34.304-22.016l-376.832-374.784q-29.696-28.672-29.696-68.608t29.696-68.608q14.336-14.336 32.256-21.504t36.864-7.168 37.376 7.168 32.768 21.504l313.344 309.248z" p-id="2681" fill="#ccc"></path></svg></div>
                 </div>
-                <!--作品特典与相关条目-->
+                <section id="ArchiveSubjectRelations" class="RecentViewDetail" hidden>
+                    <div class="subject-relations-title">关联作品</div>
+                    <div id="ArchiveSubjectRelationsList"></div>
+                </section>
+                <!--本地特典文件-->
                 <div class="RecentViewDetail" style="position:relative;width: 76%;height:auto;margin-top:2%;left:max(18%,195px);right:4%;bottom:auto;margin-bottom:15px;padding: 1.1%;-webkit-app-region:unset;backdrop-filter: blur(50px);background-color: rgba(0, 0, 0, 0.2);">
-                    <div class='RecentViewName' style='top:5px;font-size:3vw;font-size:min(3vw,35px);left: 1%;position: relative;height:auto'>Extra</div>
+                    <div class='RecentViewName' style='top:5px;font-size:3vw;font-size:min(3vw,35px);left: 1%;position: relative;height:auto'>特典文件</div>
                     <div id="ArchivePageContentDetailsEpisodeExtraBlock" class="ArchivePageContentDetailsPersonBlock"></div>
-                    <div class='RecentViewName' style='top:5px;font-size:3vw;font-size:min(3vw,35px);left: 1%;position: relative;height: auto;'>相关</div>
-                    <div id="ArchivePageContentDetailsRelativeBlock" class="ArchivePageContentDetailsPersonBlock"></div>
-                </div> 
-                <!--作品标签-->
-                <div class="RecentViewDetail" style="position:relative;width: 76%;height:auto;margin-top:2%;left:max(18%,195px);right:4%;bottom:auto;margin-bottom:15px;padding: 1.1%;-webkit-app-region:unset;backdrop-filter: blur(50px);background-color: rgba(0, 0, 0, 0.2);"> <!--top:84%;-->
-                    <div class='RecentViewName' style='top:5px;font-size:3vw;font-size:min(3vw,35px);left: 1%;position: relative;margin-bottom: 20px;'>标签</div><div id="ArchivePageContentDetailsTagBlock" style="position:relative;width:100%;margin-top: 15px;"></div></div> 
-                <!--作品目录相关-->
-                <div class="ArchivePageContentDetailsCharacterContainer" style="left:max(18%,195px)">
-                    <div class='RecentViewName' style='top:5px;font-size:3vw;font-size:min(3vw,35px);left: 1%;position: relative;height: auto;'>目录</div><div id="ArchivePageContentDetailsContentBlock" class="ArchivePageContentDetailsPersonBlock"></div>
-                </div> 
-                <!--作品STAFF-->
-                <div id='ArchivePageContentDetailsStaffBlockContainer' class="RecentViewDetail" style="position:relative;width: 76%;height:40%;margin-top:2%;left:max(18%,195px);right:4%;bottom:auto;margin-bottom:15px;padding: 1.1%;-webkit-app-region:unset;backdrop-filter: blur(50px);background-color: rgba(0, 0, 0, 0.2);overflow: hidden;"> <!--top:84%;-->
-                    <div class='RecentViewName' style='top:5px;font-size:3vw;font-size:min(3vw,35px);left: 1%;position: relative;height: auto;'>详情</div><div id="ArchivePageContentDetailsStaffBlock" style="position:relative;width:100%;margin-top:20px;left: 1%;"></div> 
-                    <div id="ArchivePageContentDetailsStaffBlockUnfoldContainer" style="position:absolute;height:20%;width:100%;bottom:0%;left:0%;background:linear-gradient(180deg, transparent, #00000098);transition: background .5s ease;">
-                    <svg id='ArchivePageContentDetailsStaffBlockUnfolder' t="1671722573107" class="icon" viewBox="0 0 1026 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="2680" data-darkreader-inline-fill="" style="position: absolute;bottom: 5px;left: 0;right: 0;width: 28px;margin:auto;transition: all .6s ease;" onclick="ArchivePageContentDetailsStaffBlockUnfoldFunc()"><path d="M857.088 224.256q28.672-28.672 69.12-28.672t69.12 28.672q29.696 28.672 29.696 68.608t-29.696 68.608l-382.976 380.928q-12.288 14.336-30.72 19.968t-38.912 4.608-40.448-8.704-34.304-22.016l-376.832-374.784q-29.696-28.672-29.696-68.608t29.696-68.608q14.336-14.336 32.256-21.504t36.864-7.168 37.376 7.168 32.768 21.504l313.344 309.248z" p-id="2681" fill="#ccc"></path></svg></div>
-                </div>
-                <!--作品角色-->
-                <div class="ArchivePageContentDetailsCharacterContainer" style="left:max(18%,195px)"> <!--top:84%;-->
-                    <div class='RecentViewName' style='top:5px;font-size:3vw;font-size:min(3vw,35px);left: 1%;position: relative;height: auto;'>角色</div><div id="ArchivePageContentDetailsCharacterBlock" class="ArchivePageContentDetailsCharacterBlock"></div>
-                </div> 
-                <!--作品制作人员-->
-                <div class="RecentViewDetail" style="position:relative;width: 76%;height:auto;margin-top:2%;left:max(18%,195px);right:4%;bottom:auto;margin-bottom:2%;padding: 1.1%;-webkit-app-region:unset;backdrop-filter: blur(50px);background-color: rgba(0, 0, 0, 0.2);">
-                    <div class='RecentViewName' style='top:5px;font-size:3vw;font-size:min(3vw,35px);left: 1%;position: relative;height: auto;'>制作人员</div><div id="ArchivePageContentDetailsPersonBlock" class="ArchivePageContentDetailsPersonBlock"></div>
+
                 </div> 
                 <!--作品页页尾-->
                 <div class="RecentViewDetail" style="position:relative;width: 78%;height:65px;margin-top:1%;left:max(18%,195px);right:4%;bottom:auto;margin-bottom:3%;padding: 0%;-webkit-app-region:unset;backdrop-filter: blur(50px);background-color: rgba(0, 0, 0, 0.2);overflow: hidden;/*border:2px solid #ffffff1f*/" onclick="$('#ArchivePageContentDetails').animate({scrollTop: 0},300)" title="点击可以回顶部哦"> <!--top:84%;-->
@@ -623,43 +564,8 @@
     }
 </script>
 
-<script> //横向平滑滚动监听
-
-    // 获取所有具有指定类名的元素ArchivePageContentDetailsPersonBlock
-    const personBlocks = document.getElementsByClassName('ArchivePageContentDetailsPersonBlock');
-
-    // 获取所有ArchivePageContentDetailsFriends样式元素 //指定的元素
-    const friendsInfo = document.getElementsByClassName('ArchivePageContentDetailsFriends')//document.getElementById('ArchivePageContentDetailsFriendsInfo');
-
-    // 将元素合并到一个数组中
-    const containers = [...personBlocks, ...friendsInfo].filter(Boolean);
-
-    // 遍历每个元素并添加事件监听器
-    Array.from(containers).forEach((container) => {
-    let scrollAmount = 0;
-    let isScrolling = false;
-
-    container.addEventListener('wheel', (event) => {
-        event.preventDefault();
-        scrollAmount += event.deltaY * 0.5;
-
-        if (!isScrolling) {
-        isScrolling = true;
-        smoothScroll(container);
-        }
-    });
-
-    function smoothScroll(element) {
-        if (Math.abs(scrollAmount) > 0.5) {
-        element.scrollLeft += scrollAmount * 0.1;
-        scrollAmount *= 0.9; // 逐渐减小滚动量
-        requestAnimationFrame(() => smoothScroll(element));
-        } else {
-        scrollAmount = 0;
-        isScrolling = false;
-        }
-    }
-    });
+<script>
+nodeRequire('./js/horizontal-scroll.cjs').install(document);
 </script>
 
 <!-- <script> //媒体库操作下拉菜单控件

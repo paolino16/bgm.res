@@ -14,7 +14,7 @@ const db = new Datastore({
   filename: path.join(path.join(appDataPath, 'bgm.res'), 'MediaData.db'),
   autoload: true
 });
-const ElectronStoreAdapter = nodeRequire('../js/ElectronStore2NeDB.js');
+const ElectronStoreAdapter = nodeRequire('../js/legacy-store-adapter.cjs');
 const store = new ElectronStoreAdapter();  // 创建自定义适配器实例
 //! NeDB数据库初始化OVER
 

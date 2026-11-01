@@ -1,3 +1,17 @@
+# bgm.res 本地番剧管理整合版
+
+这是基于 [JimHans/bgm.res](https://github.com/JimHans/bgm.res) 的个人 fork，保留上游源码和 GPL-3.0 许可证。当前开发分支为 `codex/local-library-manager`。
+
+新版桌面入口统一管理媒体库、观看进度、字幕、Bangumi 特别章节，以及 BangumiAutoRename 的识别、方案审核和执行流程。管理数据继续使用原 NeDB，整理记录和方案使用 JSON，尚未迁移 SQLite。
+
+- 当前桌面版的启动方式、数据位置和功能说明见 [桌面版说明](manager/DESKTOP.md)。
+- 整理引擎保留在独立的 [Bangumi_Auto_Rename 仓库](https://github.com/paolino16/Bangumi_Auto_Rename/tree/codex/modern-ui-responsive-tasks)，默认放在本仓库旁的 `Bangumi_Auto_Rename` 目录，也可通过 `BGM_RENAME_PROJECT` 指定。请使用包含 `src/integration_api.py` 的对应开发分支。
+- `python manager/prepare-linked.py` 从已有官方便携运行时准备本地启动环境；非默认安装位置可用 `BGM_RUNTIME_SOURCE` 指定 `win-unpacked` 目录。生成后运行 `启动原版绑定.cmd`。此仓库发布源码，未包含本机运行时、媒体、账户数据或安装包。
+- `manager/README.md` 描述的是较早的独立 SQLite 收藏管理预览入口，与当前主桌面入口分别保留。
+
+下方保留上游原版介绍。
+
+
 <p align="center">
 <img src="./assets/icons/bgm.res.png" width="279" height="60"></p>
 <h1 align="center"> bgm.Res </h1>

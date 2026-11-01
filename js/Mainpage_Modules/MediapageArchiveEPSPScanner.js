@@ -13,6 +13,7 @@ function naturalSort(a, b) {
 
 //! 媒体库-作品ep扫描模块
 exports.LocalWorkEpsScanModule = function(MediaID){
+    if (store.get("WorkSaveNo"+MediaID+".RenameBinding")) return; // Bound files are refreshed from rename records at startup.
   if(fs.existsSync(store.get("WorkSaveNo"+MediaID+".URL"))){       // *当目标媒体库目录存在
     // OKErrorStreamer("MessageOn","<div class='LoadingCircle'>正在扫描EP信息，请稍后</div>",0);
     var TargetWorkEP = fs.readdirSync(store.get("WorkSaveNo"+MediaID+".URL")).sort(naturalSort); //扫描目标媒体库目录下EP
@@ -49,6 +50,8 @@ exports.LocalWorkEpsScanModule = function(MediaID){
 
 //! 媒体库-作品特典扫描模块
 exports.ArchiveMediaBonusScan = function (TargetMediaURL,MediaID){
+  const work=store.get('WorkSaveNo'+MediaID);
+  if(work?.RenameBinding){require('../local-resources.cjs').render({document,work,shell,onError:message=>OKErrorStreamer('Error',message,0)});return;}
   fs.access(TargetMediaURL, fs.constants.R_OK, (err) => { //判断是否有读取权限
   if(!err){       // *当目标媒体库目录存在 fs.existsSync(TargetMediaURL)
     let TargetMediaDir = fs.readdirSync(TargetMediaURL); //扫描目标媒体目录
