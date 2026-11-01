@@ -71,7 +71,8 @@ function create({ipc,node,button,notice,setHeader,container,isActive}){
     const card=el('section','settings-card');card.append(el('h3','','删除 · '+preview.name),hint('源路径：'+(preview.source||'未记录')));
     const removeOutputs=input('','checkbox');removeOutputs.checked=preview.delete_outputs;
     removeOutputs.onchange=guarded(async()=>{host.inert=true;try{state.deletion=await action('delete-task-preview',{id:task.uuid,delete_outputs:removeOutputs.checked});render();}finally{host.inert=false;}});
-    card.append(label('同时将此任务关联的输出文件移入回收站',removeOutputs),hint('默认只移除任务、执行记录及待审核方案，保留输出文件。源文件、其他任务共用文件和目录会保留；删除前会备份记录。'),hint(preview.trash_count+' 个输出将回收 · '+preview.keep_count+' 个输出保留'));
+    card.append(label('同时将此任务关联的输出文件移入回收站',removeOutputs),hint('默认只移除任务、执行记录及待审核方案，保留输出文件。源文件、其他任务共用文件会保留；删除前会备份记录。'),hint(preview.trash_count+' 个输出将回收 · '+preview.keep_count+' 个输出保留'));
+    if(preview.delete_outputs){card.appendChild(hint('回收输出后递归清理空目录，到下面列出的作品目录为止；仍有内容的目录会保留。'));for(const root of preview.cleanup_roots||[])card.appendChild(hint('清理边界：'+root));if(!preview.cleanup_roots?.length)card.appendChild(hint('无法确认作品目录边界，本次保留目录。'));}
     const confirm=button(preview.delete_outputs?'确认删除记录并回收 '+preview.trash_count+' 个文件':'确认仅删除记录',guarded(async()=>{
       if(state.busy)throw Error('请等待当前任务完成');host.inert=true;
       try{const result=await action('delete-task',{id:task.uuid,token:preview.token,delete_outputs:preview.delete_outputs});state.selected=null;state.deletion=null;state.screen='tasks';await load();render();notice(result.message);}
