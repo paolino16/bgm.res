@@ -5,7 +5,7 @@ const path=require('path');
 const {pathToFileURL}=require('url');
 const {mediaType,watchedThrough,episodePath,episodeLink}=require('./js/desktop-actions.cjs');
 const {specialWatched,specialThrough,specialToggle}=require('./js/special-chapter-actions.cjs');
-const {loadCatalogue,specialChapters}=require('./js/episode-catalog.cjs');
+const {loadCatalogue,specialChapters,regularChapters}=require('./js/episode-catalog.cjs');
 const {summaryLabel}=require('./js/subtitle-index.cjs');
 const {airDateLabel,compareAirDates}=require('./js/air-date.cjs');
 const $=selector=>document.querySelector(selector);
@@ -131,23 +131,48 @@ function renderDetail(){
   }
 }
 function renderChapters(panel,work){
-  const heading=node('div','section-heading');heading.append(node('h3','','正片章节'),button('全部标为看过',async()=>{const changes=Object.fromEntries(slots(work).map(([key])=>['EPDetails.'+key+'.Condition','Watched']));if(await edit(work,changes))renderDetail();},'button quiet small'));panel.appendChild(heading);
-  const grid=node('div','chapter-grid');const tiles=new Map();
-  for(const [key,slot]of slots(work)){
+  const heading=node('div','section-heading'),mark=button('全部标为看过',async()=>{const changes=Object.fromEntries(slots(work).map(([key])=>['EPDetails.'+key+'.Condition','Watched']));if(await edit(work,changes))renderDetail();},'button quiet small');
+  mark.disabled=!slots(work).length;mark.title='将已登记的本地正片标为看过';heading.append(node('h3','','正片章节'),mark);panel.appendChild(heading);
+  const note=node('p','inline-note',work.bgmID?'正在核对 Bangumi 正片目录…':'尚未绑定 Bangumi 条目，无法核对缺集。');panel.appendChild(note);
+  const grid=node('div','chapter-grid');panel.appendChild(grid);
+  function localCard(key,slot,title){
     const watched=slot.Condition==='Watched';
-    const tile=chapterCard({label:'EP '+(slot.EpisodeNumber||slot.LocalIndex),title:episodeNames.get(String(slot.EpisodeID))||(slot.Versions?.length||1)+' 个本地文件 · '+(watched?'已看':'未看'),
+    const tile=chapterCard({label:'EP '+(slot.EpisodeNumber||slot.LocalIndex),title:title||episodeNames.get(String(slot.EpisodeID))||(slot.Versions?.length||1)+' 个本地文件 · '+(watched?'已看':'未看'),
       status:watched?'✓':'',watched,selected:state.selected===key,
-      onSelect:()=>{state.selected=key;for(const [id,el]of tiles)el.classList.toggle('selected',id===key);renderSelection(panel,work,key);panel.querySelector('.file-panel')?.scrollIntoView({block:'nearest'});},
-      actions:chapterActions(work,key,'chapter-actions')});
-    grid.appendChild(tile);tiles.set(key,tile);
+      onSelect:()=>{state.selected=key;for(const selected of panel.querySelectorAll('.chapter.selected'))selected.classList.remove('selected');tile.classList.add('selected');renderSelection(panel,work,key);panel.querySelector('.file-panel')?.scrollIntoView({block:'nearest'});},
+      actions:chapterActions(work,key,'chapter-actions')});return tile;
   }
-  panel.appendChild(grid);
-  if(!slots(work).length)empty(panel,'暂无正片章节',work.BDMV==='BDMV'?'此作品为原盘，请通过“打开文件夹”管理。':'本地章节会随重命名产物导入。');
+  for(const [key,slot]of slots(work))grid.appendChild(localCard(key,slot));
+  const initialEmpty=!slots(work).length?node('p','inline-note',work.BDMV==='BDMV'?'此作品为原盘，请通过“打开文件夹”管理。':'暂无本地正片章节。'):null;
+  if(initialEmpty)panel.appendChild(initialEmpty);
   if(state.selected)renderSelection(panel,work,state.selected);
-  const token=state.token;if(work.bgmID&&slots(work).some(([,s])=>s.EpisodeID)){
-    (async()=>{const rows=await episodeCatalogue(work.bgmID);if(token!==state.token||!grid.isConnected)return;const byId=new Map(rows.map(row=>[String(row.id),row]));for(const [key,slot]of slots(work)){const row=byId.get(String(slot.EpisodeID));if(!row)continue;const name=row.name_cn||row.name||'';episodeNames.set(String(row.id),name);const full=panel.querySelector('.selected-chapter-title');if(full?.dataset.episodeId===String(row.id))full.textContent=name;const tile=tiles.get(key),label=tile.querySelector('.chapter-name');label.textContent=row.name_cn||row.name||label.textContent;tile.title=row.name_cn||row.name||'';}})().catch(()=>{});
-  }
+  const token=state.token;
+  if(work.bgmID)episodeCatalogue(work.bgmID).then(episodes=>{
+    if(token!==state.token||!grid.isConnected)return;
+    const report=regularChapters(work,episodes),scroll=$('#content').scrollTop;grid.replaceChildren();initialEmpty?.remove();
+    const missing=report.missing.map(row=>'EP '+(row.sort??row.ep)).join('、');
+    note.classList.toggle('chapter-missing-note',Boolean(report.missing.length||report.unavailable.length));
+    note.textContent='Bangumi 共 '+report.rows.length+' 集正片 · '+report.missing.length+' 集未映射 · '+report.unavailable.length+' 集文件不可用'+(report.upcoming.length?' · '+report.upcoming.length+' 集未播出':'')+(missing?'。需核对：'+missing:'')+'。未映射可能是缺集或已有文件尚未绑定；未播出章节不计入缺集提醒。';
+    if(work.BDMV==='BDMV')note.textContent+=' 此作品为原盘，未建立逐集映射不代表原盘缺少内容。';
+    const tab=document.querySelector('[data-detail-tab="chapters"] span');if(tab)tab.textContent=report.rows.length;
+    const meta=document.querySelector('.detail-meta');if(meta?.children[2])meta.children[2].textContent='本地 '+report.rows.filter(row=>row.state==='mapped').length+' / '+report.rows.length+' 个正片章节';
+    for(const episode of report.rows){
+      const key=episode.slotKeys[0],title=episode.name_cn||episode.name||'未命名章节';episodeNames.set(String(episode.id),title);
+      const selectedTitle=panel.querySelector('.selected-chapter-title');if(selectedTitle?.dataset.episodeId===String(episode.id))selectedTitle.textContent=title;
+      if(key&&episode.state==='mapped'){const tile=localCard(key,work.EPDetails[key],title);grid.appendChild(tile);continue;}
+      const status={unmapped:'未映射',unavailable:'不可用',upcoming:'未播出',mapped:'已映射'}[episode.state];
+      const actions=episodeActions({file:episode.usable[0]?.path,link:'https://bgm.tv/ep/'+episode.id,watched:false,onToggle:()=>{},onThrough:()=>{},throughTitle:'绑定本地正片后可更新观看进度'},'chapter-actions');
+      actions.children[2].disabled=true;actions.children[3].disabled=true;
+      const tile=chapterCard({label:'EP '+(episode.sort??episode.ep),title,status,warning:episode.state==='unmapped'||episode.state==='unavailable',
+        selected:state.selected==='catalog:'+episode.id,onSelect:()=>{state.selected='catalog:'+episode.id;panel.querySelector('.file-panel')?.remove();const box=episodeFilePanel({heading:'EP '+(episode.sort??episode.ep)+' · 本地文件',title,episodeId:episode.id,actions:node('div'),files:episode.files.map(file=>({path:file.path,description:file.availability&&file.availability!=='available'?'已映射，文件状态：'+file.availability:'已映射本地文件'})),emptyMessage:episode.state==='upcoming'?'此章节尚未播出。':'未映射本地文件；请检查是否缺集，或在资源整理中核对章节绑定。',work});panel.insertBefore(box,grid);box.scrollIntoView({block:'nearest'});},actions});
+      tile.title=title+'\n'+status+(episode.airdate?'\n'+episode.airdate:'');grid.appendChild(tile);
+    }
+    if(report.unmatchedSlots.length){panel.appendChild(node('p','inline-note','以下 '+report.unmatchedSlots.length+' 个本地章节未匹配目录，保留原有操作；请核对章节绑定。'));const extra=node('div','chapter-grid');for(const [key,slot]of report.unmatchedSlots)extra.appendChild(localCard(key,slot));panel.appendChild(extra);}
+    if(!report.rows.length)note.textContent='Bangumi 暂无正片章节目录，无法据此确认是否缺集。本地未绑定章节保留在下方。';
+    $('#content').scrollTop=scroll;
+  }).catch(error=>{if(token!==state.token||!grid.isConnected)return;note.textContent='正片目录加载失败，暂时无法核对缺集：'+error.message;panel.appendChild(button('重试核对',()=>{panel.replaceChildren();renderChapters(panel,work);},'button quiet'));});
 }
+
 function renderSpecialChapters(panel,work){
   const token=state.token;
   if(!work.bgmID){empty(panel,'尚未绑定 Bangumi 条目','绑定条目后才能获取特别章节目录。');return;}

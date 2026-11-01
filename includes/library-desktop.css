@@ -91,3 +91,5 @@ body[data-background="off"] .page-header{background:none}
 .poster-watched:hover{background:#2c443ded;border-color:var(--accent);color:var(--accent)}
 .poster-watched.complete{background:#193c30ed;color:#a6ebd0;border-color:#8cdbbf70}
 .poster-watched:disabled{opacity:.55}
+
+.chapter-missing-note{color:#e5bc87;padding:12px 14px;border:1px solid #a878465f;border-radius:7px;background:#b88a4510}
