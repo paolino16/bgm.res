@@ -1,0 +1,9 @@
+# Optional experiment only; install in .desktop/vector-eval-venv (Python 3.13).
+numpy==2.5.4
+onnxruntime==1.31.1
+tokenizers==0.23.3
+huggingface_hub==2.4.0
+requests==2.34.2
+pykakasi==2.3.0
+# For --model bge-m3 --sparse only, separately install the tested CPU build:
+# pip install torch==2.15.0+cpu --index-url https://download.pytorch.org/whl/cpu

@@ -57,19 +57,8 @@
   },
   "dependencies": {
     "@electron/remote": "^2.1.2",
-    "canvas-txt": "^4.0.5",
-    "cheerio": "^1.0.0-rc.12",
-    "deasync": "^0.1.30",
     "electron-store": "^8.2.0",
-    "fluent-ffmpeg": "^2.1.2",
-    "html-to-image": "^1.11.11",
-    "jquery": "^3.7.1",
     "mica-electron": "^1.5.16",
-    "nedb": "^1.8.0",
-    "node-mpv": "^1.5.0",
-    "node-mpv-2": "^2.0.0-beta.3",
-    "qbittorrent-api-v2": "^1.2.2",
-    "qs": "^6.11.0",
-    "toastify-js": "^1.12.0"
+    "nedb": "^1.8.0"
   }
 }

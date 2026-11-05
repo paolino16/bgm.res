@@ -4,6 +4,21 @@ const fs=require('node:fs/promises');
 const os=require('node:os');
 const path=require('node:path');
 const core=require('../js/rename-binding-core.cjs');
+
+test('a replacement copy restores watched chapter state after every old copy became unavailable',()=>{
+ const old={path:path.resolve('old-copy.mkv'),episodeId:'123',number:'1',type:0,availability:'available'};
+ const group=files=>({id:'42',title:'Show',files});
+ let work=core.mergeWork(group([old]),{},'WorkSaveNo1');work.EPDetails.EP1.Condition='Watched';
+ work=core.mergeWork(group([{...old,availability:'missing'}]),work,'WorkSaveNo1');
+ assert.equal(work.EPTrueNum,0);
+ const replacement={...old,path:path.resolve('replacement-copy.mkv')};
+ work=core.mergeWork(group([replacement]),work,'WorkSaveNo1');
+ assert.equal(work.EPDetails.EP1.Condition,'Watched');
+ work.EPDetails.EP1.Condition='Unwatched';
+ work.RenameBinding.invalidResources=[{...old,Condition:'Watched'}];
+ work=core.mergeWork(group([replacement]),work,'WorkSaveNo1');
+ assert.equal(work.EPDetails.EP1.Condition,'Unwatched');
+});
 test('rename special categories and compound SP numbers stay separate from main episodes',async t=>{
   const dir=await fs.mkdtemp(path.join(os.tmpdir(),'bgm-binding-'));
   t.after(()=>fs.rm(dir,{recursive:true,force:true}));
@@ -41,4 +56,17 @@ test('empty files leave the active list while usable versions and archived watch
   assert.equal(work.EPDetails.EP1.AbsolutePath,good.path);assert.equal(work.EPDetails.EP1.Condition,'Watched');
   assert.equal(work.RenameBinding.invalidResources[0].path,bad.path);
   assert.equal(work.RenameBinding.invalidResources[0].Condition,'Watched');
+});
+
+test('split-pack OAD joins an existing episode as a second version with parent refresh lineage',async t=>{
+ const fs=require('node:fs/promises'),os=require('node:os'),path=require('node:path');const core=require('../js/rename-binding-core.cjs');
+ const directory=await fs.mkdtemp(path.join(os.tmpdir(),'bgm-oad-versions-'));t.after(()=>fs.rm(directory,{recursive:true,force:true}));
+ for(const kind of ['task','record'])await fs.mkdir(path.join(directory,kind));
+ for(const [id,group,parent]of [['old','Moozzi2',null],['new','VCB-Studio','tv-pack']]){
+  const target=path.join(directory,'OAD EP00 ['+group+'].mkv');await fs.writeFile(target,'video');
+  await fs.writeFile(path.join(directory,'task',id+'.json'),JSON.stringify({uuid:id,subject_id:'36004',name:'OAD',migration:{split_from:parent},subtitle_group:group}));
+  await fs.writeFile(path.join(directory,'record',id+'.json'),JSON.stringify({entries:{[id]:{target}},episode_bindings:[{source:id,subject_id:'36004',episode_id:56789,episode:0,episode_type:0}]}));
+ }
+ const group=(await core.readRename(directory)).groups[0];assert.equal(require('../js/task-library-cleanup.cjs').needsTaskRefresh(group,null,'tv-pack'),true);
+ const work=core.mergeWork(group,{},'WorkSaveNo1');assert.equal(work.EPTrueNum,1);assert.equal(work.EPDetails.EP1.EpisodeNumber,'0');assert.equal(work.EPDetails.EP1.Versions.length,2);assert.ok(work.EPDetails.EP1.Versions.some(file=>file.path.includes('[Moozzi2]')));assert.ok(work.EPDetails.EP1.Versions.some(file=>file.path.includes('[VCB-Studio]')));
 });

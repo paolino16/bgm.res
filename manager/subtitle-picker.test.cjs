@@ -1,0 +1,4 @@
+const {test}=require('node:test'),assert=require('node:assert/strict');
+const {optionsFor,subtitleExtensions}=require('../js/organizer-picker.cjs');
+test('subtitle picker permits multiple individual supported subtitle files',()=>{const options=optionsFor('subtitle-files');assert.deepEqual(options.properties,['openFile','multiSelections']);assert.deepEqual(options.filters[0].extensions,subtitleExtensions);assert.ok(subtitleExtensions.includes('ass'));assert.ok(subtitleExtensions.includes('srt'));assert.ok(subtitleExtensions.includes('sup'));assert.ok(!options.properties.includes('openDirectory'));});
+test('subtitle directory picker is separate and existing organizer multi-source pickers remain available',()=>{assert.deepEqual(optionsFor('subtitle-folder').properties,['openDirectory']);assert.ok(optionsFor('folder').properties.includes('multiSelections'));assert.ok(optionsFor('file').properties.includes('openFile'));assert.throws(()=>optionsFor('unknown'),/不支持/);});

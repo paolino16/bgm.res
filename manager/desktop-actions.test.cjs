@@ -15,3 +15,11 @@ test('play uses the selected local version; comments use explicit Bangumi episod
   assert.equal(episodePath(work,slot),slot.AbsolutePath);assert.equal(episodeLink(slot),'https://bgm.tv/ep/12345');
   assert.equal(episodeLink({EpisodeNumber:26}),null);assert.equal(episodePath(work,{URL:'video.mkv'}),path.resolve('media/video.mkv'));
 });
+
+test('original folder uses recorded source rather than the renamed media path',()=>{
+ const {sourcePath}=require('../js/desktop-actions.cjs'),file=path.resolve('media/Show.mkv'),source=path.resolve('original/Raw.mkv');
+ assert.equal(sourcePath({RenameBinding:{files:[{path:file,source}]}},file),source);
+ assert.equal(sourcePath({EPDetails:{EP1:{Versions:[{path:file,source}]}}},file),source);
+ assert.equal(sourcePath({RenameBinding:{files:[{path:file,source:'relative.mkv'}]}},file),null);
+ assert.equal(sourcePath({RenameBinding:{files:[{path:file,source}]}},path.resolve('other.mkv')),null);
+});

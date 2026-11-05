@@ -29,17 +29,24 @@ function mount({root,viewport,items,renderItem,releaseItem,window,ResizeObserver
     }
   }
   function schedule(){if(!frame&&!destroyed)frame=window.requestAnimationFrame(update);}
-  function measure(){
+  function measure({preserveAnchor=false}={}){
     if(destroyed)return;
+    const offset=layout?Math.max(0,viewport.scrollTop-rootTop):0;const anchor=layout?Math.floor(offset/layout.stride)*layout.columns:0;const fraction=layout?(offset%layout.stride)/layout.stride:0;
     const style=window.getComputedStyle(root);
     const next=geometry(root.clientWidth,parseFloat(style.getPropertyValue('--poster-min'))||152,parseFloat(style.columnGap)||20,parseFloat(style.rowGap)||26,items.length,parseFloat(style.getPropertyValue('--poster-extra'))||0);
     rootTop=root.getBoundingClientRect().top-viewport.getBoundingClientRect().top+viewport.scrollTop;
     if(!layout||next.columns!==layout.columns||Math.abs(next.cardHeight-layout.cardHeight)>.1){for(const row of rows.values())release(row);rows.clear();}
-    layout=next;const height=next.height+'px';if(root.style.height!==height)root.style.height=height;update();
+    layout=next;const height=next.height+'px';if(root.style.height!==height)root.style.height=height;if(preserveAnchor)viewport.scrollTop=rootTop+(Math.floor(anchor/layout.columns)+fraction)*layout.stride;update();
   }
   const observer=new ResizeObserver(measure);observer.observe(root);observer.observe(viewport);
   viewport.addEventListener('scroll',schedule,{passive:true});root.addEventListener('focusout',schedule);
   measure();
-  return {destroy(){destroyed=true;observer.disconnect();viewport.removeEventListener('scroll',schedule);root.removeEventListener('focusout',schedule);if(frame)window.cancelAnimationFrame(frame);for(const row of rows.values())release(row);rows.clear();}};
+  return {setItems(next){
+    for(const [index,row]of rows){
+      const start=index*layout.columns,end=Math.min(items.length,start+layout.columns);
+      if(end-start!==Math.min(next.length,start+layout.columns)-start||items.slice(start,end).some((item,i)=>item!==next[start+i])){release(row);rows.delete(index);}
+    }
+    items=next;measure();
+  },refresh(){measure({preserveAnchor:true});},destroy(){destroyed=true;observer.disconnect();viewport.removeEventListener('scroll',schedule);root.removeEventListener('focusout',schedule);if(frame)window.cancelAnimationFrame(frame);for(const row of rows.values())release(row);rows.clear();}};
 }
 module.exports={geometry,range,mount};

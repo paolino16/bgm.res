@@ -34,12 +34,12 @@ async function readRename(dataDir){
       const target=typeof entry==='string'?entry:entry?.target;if(!target||!path.isAbsolute(target)||!video.test(target))continue;
       const b=bindings.get(normalized(source))||{},bgm=String(b.subject_id||task.subject_id||task.bgm_id||'');
       if(!/^\d+$/.test(bgm)){errors.push({file:target,error:'缺少明确 Bangumi 条目 ID，未接管'});continue;}
-      const identity=bgm+':'+(b.episode_id||'');const pk=normalized(target);
+      const identity=bgm+':'+(b.category==='collection'?'collection:'+JSON.stringify(b.episode_ids||[]):(b.episode_id||''));const pk=normalized(target);
       if(used.has(pk)){if(used.get(pk)!==identity)throw Error('同一输出文件存在不同章节绑定：'+target);continue;}used.set(pk,identity);
       if(!groups.has(bgm))groups.set(bgm,{id:bgm,title:task.bangumi_name||task.name||path.basename(path.dirname(target)),year:task.year||'',files:[]});
       const number=path.basename(target).match(/(?:^|[\s[\]_.-])(?:EP|SP|S\d+E)(\d+(?:[._-]\d+)*)/i)?.[1];
       const type=b.category==='extra'?'extra':b.episode_type!=null?Number(b.episode_type):b.category==='special'?1:/[\\/](?:extras?)[\\/]/i.test(target)?'extra':/[\\/](?:specials?|sps?)[\\/]/i.test(target)?1:null;
-      groups.get(bgm).files.push({path:target,taskId:task.uuid||name,source,episodeId:b.episode_id?String(b.episode_id):null,number:b.episode!=null?String(b.episode):number||null,type});
+      groups.get(bgm).files.push({path:target,taskId:task.uuid||name,source,parentTaskIds:[].concat(task.migration?.split_from||[]).map(String),episodeId:b.episode_id?String(b.episode_id):null,number:b.episode!=null?String(b.episode):number||null,type,subtitleGroup:task.subtitle_group||'',collection:b.category==='collection',episodeIds:(b.episode_ids||[]).map(String)});
     }
   }catch(e){errors.push({file:name,error:e.message});}}
   // A contradictory mapping is never silently resolved by traversal order.
@@ -52,16 +52,20 @@ function mergeWork(group,existing={},workKey){
   const work={WorkSaveNo:workKey,Name:group.title,URL:root,bgmID:group.id,Year:group.year||'0000',Score:'0.0',Type:'TV',Eps:0,Protocol:'Unknown',Director:'Unknown',Corp:'Unknown',Cover:'./assets/banner.jpg',ExistCondition:'Exist',...clone(existing)};
   work.URL=root;
   const oldSlots=[...allSlots(existing),...allSlots(existing,'SP'),...[...(existing.RenameBinding?.resources||[]),...(existing.RenameBinding?.invalidResources||[]),...(existing.RenameBinding?.dismissedResources||[])].map(f=>({...f,AbsolutePath:f.path}))],byEpisode=new Map(oldSlots.filter(s=>s.EpisodeID).map(s=>[String(s.EpisodeID),s])),byPath=new Map(oldSlots.flatMap(s=>(s.Versions||[{path:s.AbsolutePath||path.resolve(existing.URL||root,s.URL||'')}]).map(v=>[normalized(v.path),s])));
-  const epGroups=new Map(),spGroups=new Map(),extras=[],invalid=[];
-  for(const file of group.files){if(file.availability==='removed')continue;if((file.availability&&file.availability!=='available')||file.type==='extra'||(typeof file.type==='number'&&file.type>=1)){const old=byPath.get(normalized(file.path));const destination=file.availability&&file.availability!=='available'?invalid:extras;destination.push({...file,Condition:old?.Condition||'Unwatched',...(old?.LastWatched?{LastWatched:old.LastWatched}:{})});continue;}const map=epGroups;const k=file.episodeId?'id:'+file.episodeId:'path:'+normalized(file.path);if(!map.has(k))map.set(k,[]);map.get(k).push(file);}
+  const epGroups=new Map(),spGroups=new Map(),extras=[],invalid=[],effectiveFiles=[];
+  // An unavailable copy retains the chapter state even if its replacement has a new path.
+  for(const archived of [...(existing.RenameBinding?.resources||[]),...(existing.RenameBinding?.invalidResources||[]),...(existing.RenameBinding?.dismissedResources||[])]){
+    if(archived.episodeId&&!byEpisode.has(String(archived.episodeId)))byEpisode.set(String(archived.episodeId),archived);
+  }
+  for(const raw of group.files){const override=existing.CollectionBindings?.[crypto.createHash('sha256').update(normalized(raw.path)).digest('hex')];const file=override?{...raw,collection:true,episodeIds:override.episodeIds,episodeId:null,type:0}:raw;effectiveFiles.push(file);if(file.availability==='removed')continue;if((file.availability&&file.availability!=='available')||(!file.collection&&(file.type==='extra'||(typeof file.type==='number'&&file.type>=1)))){const old=byPath.get(normalized(file.path));const destination=file.availability&&file.availability!=='available'?invalid:extras;destination.push({...file,Condition:old?.Condition||'Unwatched',...(old?.LastWatched?{LastWatched:old.LastWatched}:{})});continue;}const map=epGroups;const k=file.collection?'collection:'+JSON.stringify([...(file.episodeIds||[])].sort()):file.episodeId?'id:'+file.episodeId:'path:'+normalized(file.path);if(!map.has(k))map.set(k,[]);map.get(k).push(file);}
   function slots(map,type){const out={};let index=0;const sorted=[...map.values()].sort((a,b)=>Number(a[0].number??Infinity)-Number(b[0].number??Infinity)||a[0].path.localeCompare(b[0].path));
     for(const files of sorted){index++;const f=files[0],old=byEpisode.get(f.episodeId)||byPath.get(normalized(f.path))||{};
       const preferred=files.find(v=>normalized(v.path)===normalized(old.AbsolutePath||path.resolve(root,old.URL||'')))||files[0];
-      out[type+index]={...old,URL:path.relative(root,preferred.path),AbsolutePath:preferred.path,EpisodeID:f.episodeId,EpisodeNumber:f.number,EpisodeType:type==='EP'?0:1,LocalIndex:index,Condition:old.Condition||'Unwatched',Versions:files.map(v=>({path:v.path,taskId:v.taskId,source:v.source})),BindingSource:'BangumiAutoRename'};
+      out[type+index]={...old,URL:path.relative(root,preferred.path),AbsolutePath:preferred.path,EpisodeID:f.collection?null:f.episodeId,EpisodeNumber:f.collection?null:f.number,Collection:Boolean(f.collection),SubtitleGroup:f.subtitleGroup||old.SubtitleGroup||'',EpisodeIDs:f.collection?(f.episodeIds||[]):[],EpisodeType:type==='EP'?0:1,LocalIndex:index,Condition:old.Condition||'Unwatched',Versions:files.map(v=>({path:v.path,taskId:v.taskId,source:v.source})),BindingSource:'BangumiAutoRename'};
     }return out;
   }
   work.EPDetails=slots(epGroups,'EP');work.SPDetails=slots(spGroups,'SP');work.EPTrueNum=Object.keys(work.EPDetails).length;work.SPTrueNum=Object.keys(work.SPDetails).length;
-  work.Eps=Math.max(Number(existing.Eps)||0,work.EPTrueNum);work.RenameBinding={schema:1,subjectId:group.id,dataSource:'BangumiAutoRename',resources:extras,invalidResources:invalid,dismissedResources:(existing.RenameBinding?.dismissedResources||[]).filter(row=>group.files.some(file=>normalized(file.path)===normalized(row.path)&&file.availability==='removed')),ignoredMissing:group.files.filter(file=>file.availability==='removed').map(file=>file.path),files:group.files,fingerprint:crypto.createHash('sha256').update(JSON.stringify(group.files)).digest('hex')};
+  work.Eps=Math.max(Number(existing.Eps)||0,work.EPTrueNum);work.RenameBinding={schema:1,subjectId:group.id,dataSource:'BangumiAutoRename',resources:extras,invalidResources:invalid,dismissedResources:(existing.RenameBinding?.dismissedResources||[]).filter(row=>group.files.some(file=>normalized(file.path)===normalized(row.path)&&file.availability==='removed')),ignoredMissing:group.files.filter(file=>file.availability==='removed').map(file=>file.path),files:effectiveFiles,fingerprint:crypto.createHash('sha256').update(JSON.stringify(group.files)).digest('hex')};
   return work;
 }
 function remapRecent(records,previous,next){

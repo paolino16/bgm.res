@@ -15,4 +15,10 @@ function watchedThrough(work,key){
 }
 function episodePath(work,slot){return slot.AbsolutePath||slot.Versions?.[0]?.path||(slot.URL?path.resolve(work.URL,slot.URL):null);}
 function episodeLink(slot){return /^[1-9]\d*$/.test(String(slot.EpisodeID||''))?'https://bgm.tv/ep/'+slot.EpisodeID:null;}
-module.exports={mediaType,watchedThrough,episodePath,episodeLink};
+function sourcePath(work,file){
+  const identity=path.resolve(file).toLowerCase();
+  const rows=[...(work.RenameBinding?.files||[]),...['EPDetails','SPDetails'].flatMap(kind=>Object.values(work[kind]||{}).flatMap(slot=>slot.Versions||[]))];
+  const source=rows.find(row=>row.path&&path.resolve(row.path).toLowerCase()===identity&&row.source)?.source;
+  return typeof source==='string'&&path.isAbsolute(source)?source:null;
+}
+module.exports={mediaType,watchedThrough,episodePath,episodeLink,sourcePath};

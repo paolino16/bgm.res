@@ -1,0 +1,14 @@
+# bgm.res engine dependencies (Python >= 3.9).
+# The existing local runtime is verified on Python 3.14.
+fastapi>=0.115
+uvicorn>=0.30
+requests>=2.32.3
+tmdbsimple>=2.9.1
+jikanpy-v4>=1.0.2
+pywin32>=308; sys_platform == "win32"
+structlog>=24.4.0
+frozenlist>=1.5.0
+openai>=1.54.0
+hachoir>=3.3.0
+google-genai>=0.8.0
+pykakasi>=2.3.0,<3

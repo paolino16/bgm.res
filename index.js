@@ -11,11 +11,17 @@ let SysdataOption={
   name:"sysdata",//文件名称,默认 config
   fileExtension:"json",//文件后缀,默认json
 }; const sysdata = new Store(SysdataOption); if(!sysdata.get("Settings")) sysdata.set(require("./sysdata_default.json"));                          //?创建electron-store存储资源库对象-系统设置存储
-let userpage = null;/*用户页面全局对象*/
-let AddMediaPage = null;/*添加媒体页面全局对象*/
-let RecycleBinPage = null;/*添加已屏蔽作品页面全局对象*/
-let MediaDirSetPage = null;/*添加媒体目录设置页面全局对象*/
-let OOBEPage = null;/*OOBE页面全局对象*/
+const hasInstanceLock = app.requestSingleInstanceLock();
+if (!hasInstanceLock) app.quit();
+let mainWindow = null;
+app.on('second-instance', (_event, commandLine) => {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.show();
+  mainWindow.focus();
+  const callback = commandLine.find(argument => /^bgmres:/i.test(argument));
+  if (callback) mainWindow.webContents.send('logincode', decodeURI(callback));
+});
 
 function createWindow () {
     const screenElectron = require('electron').screen;
@@ -49,7 +55,7 @@ function createWindow () {
           contextIsolation: false,
           webviewTag: true,
           zoomFactor: 1,
-          preload: path.join(__dirname, 'preload.js')
+
         }
       })
 
@@ -95,7 +101,7 @@ function createWindow () {
           contextIsolation: false,
           webviewTag: true,
           zoomFactor: 1,
-          preload: path.join(__dirname, 'preload.js')
+
         }
       })
     
@@ -112,7 +118,9 @@ function createWindow () {
       // win.webContents.openDevTools();
     }
 
+    mainWindow = win;
     win.on('closed', function() {
+      mainWindow = null;
       app.quit();});
 //系统托盘右键菜单
 var trayMenuTemplate = [
@@ -224,303 +232,6 @@ ipcMain.on("dev",(event,data) => {
   if(data == 'Open') {win.webContents.openDevTools();}
 });
 
-//!监听作品编辑窗口打开信号
-ipcMain.on('MediaSettings', (event, arg) => {
-  // 创建子页面
-  let setwidth = screenElectron.getPrimaryDisplay().workAreaSize.width;
-  let MediaSettings = new BrowserWindow({
-    width: parseInt((setwidth/2)*(6/5)),
-    height: parseInt((setwidth/2)*(3/4)),
-    minWidth: 500,
-    minHeight: 360,
-    skipTaskbar: false,//显示在任务栏
-    alwaysOnTop: false,//置顶显示
-    transparent: false,//底部透明
-    frame: true,
-      titleBarStyle: "hidden",
-      titleBarOverlay: {
-        color: "#202020",
-        symbolColor: "white", },
-    resizable: true,
-    icon: path.join(__dirname, './assets/icons/app.ico'),
-    show: true,
-    webPreferences: {
-      devTools: true,
-      nodeIntegration: true,
-      enableRemoteModule: true,
-      contextIsolation: false,
-    }
-  });
-  MediaSettings.webContents.setUserAgent(`JimHan/bgm.res/${packageGet.version} (Windows) (https://github.com/JimHans/bgm.res)`);
-  MediaSettings.loadFile(path.join(__dirname, './pages/MediaSettings.html'));// 并且为你的应用加载index.html
-  require('@electron/remote/main').enable(MediaSettings.webContents) // 启用 electron/remote web组件
-  // MediaSettings.webContents.openDevTools();
-  MediaSettings.on('ready-to-show', function () {
-  MediaSettings.webContents.send('data',arg.data); // 发送消息
-  MediaSettings.show() // 初始化后再显示
-  });
-  MediaSettings.on('closed', () => { MediaSettings = null });
-});
-
-//!监听分享窗口打开信号
-ipcMain.on('MediaShare', (event, data) => {
-  // 创建子页面
-  let MediaShare = new BrowserWindow({
-    width: 630,
-    height: 480,
-    skipTaskbar: false,//显示在任务栏
-    alwaysOnTop: false,//置顶显示
-    transparent: false,//底部透明
-    frame: true,
-      titleBarStyle: "hidden",
-      titleBarOverlay: {
-        color: "#202020",
-        symbolColor: "white", },
-    resizable: false,
-    icon: path.join(__dirname, './assets/icons/app.ico'),
-    show: true,
-    webPreferences: {
-      devTools: true,
-      nodeIntegration: true,
-      enableRemoteModule: true,
-      contextIsolation: false,
-    }
-  });
-  MediaShare.webContents.setUserAgent(`JimHan/bgm.res/${packageGet.version} (Windows) (https://github.com/JimHans/bgm.res)`);
-  MediaShare.loadFile(path.join(__dirname, './pages/MediaShare.html'));// 并且为你的应用加载index.html
-  require('@electron/remote/main').enable(MediaShare.webContents) // 启用 electron/remote web组件
-  // MediaShare.webContents.openDevTools();
-  MediaShare.on('ready-to-show', function () {
-    MediaShare.webContents.send('data',data); // 发送消息
-    MediaShare.show() // 初始化后再显示
-  });
-  MediaShare.on('closed', () => { MediaShare = null });
-});
-
-//!用户信息页初始化函数
-function userpageShow () {
-  //窗口打开监听
-  var setheight = screenElectron.getPrimaryDisplay().workAreaSize.height;
-  //新建窗口
-  userpage = new BrowserWindow({
-    width: Math.max(parseInt(setheight*0.4),470),
-    height: Math.max(parseInt(setheight*0.75),320),
-    minWidth: 470,
-    minHeight: 320,
-    skipTaskbar: false,//显示在任务栏
-    alwaysOnTop: false,//置顶显示
-    transparent: false,//底部透明
-    frame: true,
-      titleBarStyle: "hidden",
-      titleBarOverlay: {
-        color: "#202020",
-        symbolColor: "white", },
-    resizable: true,
-    icon: path.join(__dirname, './assets/icons/app.ico'),
-    show: true,
-    webPreferences: {
-      devTools: true,
-      nodeIntegration: true,
-      enableRemoteModule: true,
-      contextIsolation: false,
-    }
-  });
-  // 并且为你的应用加载index.html
-  userpage.webContents.setUserAgent(`JimHan/bgm.res/${packageGet.version} (Windows) (https://github.com/JimHans/bgm.res)`);
-  userpage.loadFile(path.join(__dirname, './pages/userpage.html'));
-  require('@electron/remote/main').enable(userpage.webContents) // 启用 electron/remote web组件
-  // userpage.webContents.openDevTools();
-}
-
-//监听用户信息页打开信号
-ipcMain.on("userpage",(event,data) => {
-  console.log(data);
-  if(data == 'Open') {
-    if(userpage==null||userpage.isDestroyed()){userpageShow ();}
-    else {userpage.show();}
-  }
-  if(data == 'Close') {event.preventDefault(); userpage.close();}
-});
-
-//!添加媒体页初始化函数
-function AddMediaPageShow () {
-  // 创建子页面
-  let setwidth = screenElectron.getPrimaryDisplay().workAreaSize.width;
-  AddMediaPage = new BrowserWindow({
-    width: parseInt((setwidth/2)*(6/5)),
-    height: parseInt((setwidth/2)*(3/4)),
-    minWidth: 500,
-    minHeight: 360,
-    skipTaskbar: false,//显示在任务栏
-    alwaysOnTop: false,//置顶显示
-    transparent: false,//底部透明
-    frame: true,
-      titleBarStyle: "hidden",
-      titleBarOverlay: {
-        color: "#202020",
-        symbolColor: "white", },
-    resizable: true,
-    icon: path.join(__dirname, './assets/icons/app.ico'),
-    show: true,
-    webPreferences: {
-      devTools: true,
-      nodeIntegration: true,
-      enableRemoteModule: true,
-      contextIsolation: false,
-    }
-  });
-  AddMediaPage.webContents.setUserAgent(`JimHan/bgm.res/${packageGet.version} (Windows) (https://github.com/JimHans/bgm.res)`);
-  AddMediaPage.loadFile(path.join(__dirname, './pages/AddMediaPage.html'));// 并且为你的应用加载index.html
-  require('@electron/remote/main').enable(AddMediaPage.webContents) // 启用 electron/remote web组件
-  // AddMediaPage.webContents.openDevTools();
-  AddMediaPage.on('ready-to-show', function () {
-    AddMediaPage.webContents.send('data','OK'); // 发送消息
-    AddMediaPage.show() // 初始化后再显示
-  });
-  AddMediaPage.on('closed', () => { AddMediaPage = null });
-}
-
-//监听添加作品页打开信号
-ipcMain.on("AddMediaPage",(event,data) => {
-  console.log(data);
-  if(data == 'Open') {
-    if(AddMediaPage==null||AddMediaPage.isDestroyed()){AddMediaPageShow ();}
-    else {AddMediaPage.show();}
-  }
-  if(data == 'Close') {event.preventDefault(); AddMediaPage.close();}
-});
-
-//!已屏蔽媒体页初始化函数
-function RecycleBinPageShow () {
-  // 创建子页面
-  let setwidth = screenElectron.getPrimaryDisplay().workAreaSize.width;
-  RecycleBinPage = new BrowserWindow({
-    height: parseInt((setwidth/2)*(3/4)),
-    width: parseInt((setwidth/2)*(3/4)),
-    minWidth: 500,
-    minHeight: 360,
-    skipTaskbar: false,//显示在任务栏
-    alwaysOnTop: false,//置顶显示
-    transparent: false,//底部透明
-    frame: true,
-      titleBarStyle: "hidden",
-      titleBarOverlay: {
-        color: "#202020",
-        symbolColor: "white", },
-    resizable: true,
-    icon: path.join(__dirname, './assets/icons/app.ico'),
-    show: true,
-    webPreferences: {
-      devTools: true,
-      nodeIntegration: true,
-      enableRemoteModule: true,
-      contextIsolation: false,
-    }
-  });
-  RecycleBinPage.webContents.setUserAgent(`JimHan/bgm.res/${packageGet.version} (Windows) (https://github.com/JimHans/bgm.res)`);
-  RecycleBinPage.loadFile(path.join(__dirname, './pages/RecycleBinPage.html'));// 并且为你的应用加载index.html
-  require('@electron/remote/main').enable(RecycleBinPage.webContents) // 启用 electron/remote web组件
-  RecycleBinPage.on('ready-to-show', function () {
-    RecycleBinPage.webContents.send('data','OK'); // 发送消息
-    RecycleBinPage.show() // 初始化后再显示
-  });
-  RecycleBinPage.on('closed', () => { RecycleBinPage = null });
-}
-
-//监听已屏蔽作品页打开信号
-ipcMain.on("RecycleBin",(event,data) => {
-  console.log(data);
-  if(data == 'Open') {
-    if(RecycleBinPage==null||RecycleBinPage.isDestroyed()){RecycleBinPageShow ();}
-    else {RecycleBinPage.show();}
-  }
-  if(data == 'Close') {event.preventDefault(); RecycleBinPage.close();}
-});
-
-//!媒体库路径设置页初始化函数
-function MediaDirSetPageShow () {
-  // 创建子页面
-  let setwidth = screenElectron.getPrimaryDisplay().workAreaSize.width;
-  MediaDirSetPage = new BrowserWindow({
-    height: parseInt((setwidth/2)*(3/4)),
-    width: parseInt((setwidth/2)*(3/4)),
-    minWidth: 500,
-    minHeight: 360,
-    skipTaskbar: false,//显示在任务栏
-    alwaysOnTop: false,//置顶显示
-    transparent: false,//底部透明
-    frame: true,
-      titleBarStyle: "hidden",
-      titleBarOverlay: {
-        color: "#202020",
-        symbolColor: "white", },
-    resizable: true,
-    icon: path.join(__dirname, './assets/icons/app.ico'),
-    show: true,
-    webPreferences: {
-      devTools: true,
-      nodeIntegration: true,
-      enableRemoteModule: true,
-      contextIsolation: false,
-    }
-  });
-  MediaDirSetPage.loadFile(path.join(__dirname, './pages/MediaDirSetPage.html'));// 并且为你的应用加载index.html
-  require('@electron/remote/main').enable(MediaDirSetPage.webContents) // 启用 electron/remote web组件
-  MediaDirSetPage.on('ready-to-show', function () {
-    MediaDirSetPage.webContents.send('data','OK'); // 发送消息
-    MediaDirSetPage.show() // 初始化后再显示
-  });
-  MediaDirSetPage.on('closed', () => { MediaDirSetPage = null });
-}
-
-//监听媒体库路径设置页打开信号
-ipcMain.on("MediaDirSet",(event,data) => {
-  console.log(data);
-  if(data == 'Open') {
-    if(MediaDirSetPage==null||MediaDirSetPage.isDestroyed()){MediaDirSetPageShow ();}
-    else {MediaDirSetPage.show();}
-  }
-  if(data == 'Close') {event.preventDefault(); MediaDirSetPage.close();}
-});
-
-//!OOBE页面初始化函数
-ipcMain.on('OOBEPage', (event, data) => {
-  // 创建子页面
-  if (data == 'Close') {OOBEPage.close();OOBEPage = null;}
-  else{
-    OOBEPage = new BrowserWindow({
-      width: 400,
-      height: 600,
-      skipTaskbar: false,//显示在任务栏
-      alwaysOnTop: false,//置顶显示
-      transparent: false,//底部透明
-      frame: false,
-      resizable: false,
-      icon: path.join(__dirname, './assets/icons/app.ico'),
-      show: true,
-      webPreferences: {
-        devTools: true,
-        nodeIntegration: true,
-        enableRemoteModule: true,
-        contextIsolation: false,
-      }
-    });
-    OOBEPage.loadFile(path.join(__dirname, './pages/OOBEPage.html'));// 并且为你的应用加载index.html
-    // OOBEPage.webContents.openDevTools();
-    OOBEPage.on('ready-to-show', function () {
-      OOBEPage.show() // 初始化后再显示
-    });
-    OOBEPage.on('closed', () => { OOBEPage = null });
-  }
-});
-
-
-// // alternatively use these to
-// // dynamically change vibrancy
-// win.setVibrancy([options])
-// // or
-// setVibrancy(win, [options])
-
 //图标的上下文菜单
 trayIcon = path.join(__dirname, 'assets/icons');//选取目录
 tray = new Tray(path.join(trayIcon, 'app.ico'));
@@ -540,25 +251,11 @@ tray.setContextMenu(contextMenu);
 
 app.setAsDefaultProtocolClient('bgmres');
 //注册唤醒链接，处理回调数据
-const gotTheLock = app.requestSingleInstanceLock();
-if (!gotTheLock) {app.quit();} else {
-  app.on('second-instance', (event, commandLine, workingDirectory) => {
-    // 聚焦到myWindow这个窗口
-    if (win) {
-      if (win.isMinimized()) win.restore();
-      win.focus();
-      let commands = commandLine.slice();
-      // commandLine 是一个数组， 其中最后一个数组元素为我们唤醒的链接
-      activeUrl = decodeURI(commands.pop());
-      win.webContents.send('logincode',activeUrl)
-    }
-  });
-}
 }
 
 // Electron会在初始化完成并且准备好创建浏览器窗口时调用这个方法
 // 部分 API 在 ready 事件触发后才能使用。
-app.whenReady().then(async () => { const linked = await require('./js/rename-binding-main.cjs').start({ipcMain, app, sysdata, Datastore: require('nedb')}); createWindow(); linked.hydrate().catch(error => console.error('Metadata hydration failed:', error.message)); }).catch(error => { dialog.showErrorBox('重命名产物绑定失败', error.message); app.quit(); })
+if (hasInstanceLock) app.whenReady().then(async () => { const linked = await require('./js/rename-binding-main.cjs').start({ipcMain, app, sysdata, Datastore: require('nedb')}); createWindow(); linked.hydrate().catch(error => console.error('Metadata hydration failed:', error.message)); }).catch(error => { dialog.showErrorBox('重命名产物绑定失败', error.message); app.quit(); })
 
 //当所有窗口都被关闭后退出
 app.on('window-all-closed', () => {
