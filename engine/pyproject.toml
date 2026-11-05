@@ -1,0 +1,40 @@
+[project]
+name = "bgm-res-engine"
+version = "0.2.1"
+description = "Recognition and file organization engine maintained within bgm.res"
+authors = [{ name = "KimigaiiWuyi", email = "444835641@qq.com" }]
+dependencies = [
+    "tmdbsimple>=2.9.1",
+    "jikanpy-v4>=1.0.2",
+    "fastapi>=0.115",
+    "uvicorn>=0.30",
+    "pykakasi>=2.3.0,<3",
+    "pywin32>=308",
+    "structlog>=24.4.0",
+    "frozenlist>=1.5.0",
+    "openai>=1.54.0",
+    "hachoir>=3.3.0",
+    "google>=3.0.0",
+    "google-genai>=0.8.0",
+]
+requires-python = ">=3.9,<4.0"
+license = { text = "GPLv3" }
+
+
+[tool.pdm]
+distribution = false
+
+[tool.pdm.scripts]
+start = "python -m src.desktop_service"
+
+[[tool.pdm.source]]
+name = "TUNA"
+url = "https://mirrors.tuna.tsinghua.edu.cn/pypi/web/simple"
+
+[tool.isort]
+profile = "black"
+line_length = 79
+length_sort = true
+skip_gitignore = true
+force_sort_within_sections = true
+extra_standard_library = ["typing_extensions"]

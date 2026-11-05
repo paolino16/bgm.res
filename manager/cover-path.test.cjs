@@ -1,0 +1,20 @@
+const {test}=require('node:test');
+const assert=require('node:assert/strict');
+const fs=require('node:fs');
+const os=require('node:os');
+const path=require('node:path');
+const {pathToFileURL}=require('node:url');
+const {resolveCover}=require('../js/cover-path.cjs');
+test('relocates existing managed artwork and preserves unrelated or missing files',t=>{
+  const directory=fs.mkdtempSync(path.join(os.tmpdir(),'bgm-cover-path-'));
+  t.after(()=>fs.rmSync(directory,{recursive:true,force:true}));
+  fs.mkdirSync(path.join(directory,'covers'));
+  const name='a'.repeat(64)+'.jpg',local=path.join(directory,'covers',name);
+  fs.writeFileSync(local,'cover');
+  const old=pathToFileURL(path.join(directory,'old','bgm.res-linked','covers',name)).href;
+  assert.equal(resolveCover(old,directory),pathToFileURL(local).href);
+  const unrelated=pathToFileURL(path.join(directory,'custom','covers',name)).href;
+  assert.equal(resolveCover(unrelated,directory),unrelated);
+  fs.unlinkSync(local);assert.equal(resolveCover(old,directory),old);
+  assert.equal(resolveCover('https://lain.bgm.tv/cover.jpg',directory),'https://lain.bgm.tv/cover.jpg');
+});

@@ -7,4 +7,12 @@ package-lock.json
 启动收藏管理.cmd
 
 .linked-desktop/
+engine/.venv/
+engine/__pycache__/
+engine/**/__pycache__/
+engine/.bgm-storage.json
+engine/data/
+engine/.nicegui/
 启动原版绑定.cmd
+
+启动 bgm.res.cmd

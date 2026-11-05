@@ -5,7 +5,7 @@ const net=require('node:net');
 const {spawn}=require('node:child_process');
 const delay=ms=>new Promise(r=>setTimeout(r,ms));
 function atomicJSON(file,value){const tmp=file+'.tmp';fs.writeFileSync(tmp,JSON.stringify(value,null,2));fs.renameSync(tmp,file);}
-function sourceRoot(){return process.env.BGM_RENAME_PROJECT||path.resolve(__dirname,'../../Bangumi_Auto_Rename');}
+function sourceRoot(){return process.env.BGM_RENAME_PROJECT||path.resolve(__dirname,'../engine');}
 function dataPath(directory,project=sourceRoot(),env=process.env){
   const pointer=path.join(project,'.bgm-storage.json');
   if(fs.existsSync(pointer))return JSON.parse(fs.readFileSync(pointer,'utf8')).renameData;
@@ -22,8 +22,11 @@ async function prepare(directory,project=sourceRoot(),isOccupied=occupied){
     if(!fs.existsSync(target))throw Error('统一数据目录不可用：'+target);
     return target;
   }
-  if(await isOccupied(5999))throw Error('首次整合前请关闭正在运行的 AutoRename（5999 端口），再点击资源整理。原记录尚未迁移。');
   const source=dataPath(directory,project);
+  if(path.resolve(source).toLowerCase()===path.resolve(target).toLowerCase()&&fs.existsSync(path.join(target,'task'))){
+    atomicJSON(pointer,{version:1,renameData:target});return target;
+  }
+  if(await isOccupied(5999))throw Error('首次整合前请关闭正在运行的整理服务（5999 端口），再点击资源整理。原记录尚未迁移。');
   if(fs.existsSync(target))throw Error('目标整理目录已经存在但尚未绑定，请先核对：'+target);
   fs.mkdirSync(directory,{recursive:true});
   const staging=target+'.staging-'+Date.now();
@@ -57,32 +60,17 @@ async function prepare(directory,project=sourceRoot(),isOccupied=occupied){
   atomicJSON(pointer,{version:1,renameData:target,backupData:source});
   return target;
 }
-function create({directory,onReturn}){
-  let pending;
-  async function ensure(){
-    const project=sourceRoot();
-    if(!fs.existsSync(path.join(project,'src/start.py')))throw Error('找不到整理引擎，请设置 BGM_RENAME_PROJECT：'+project);
-    const target=await prepare(directory,project);
-    let status=await health();
-    if(!status){
-      if(await occupied(5999))throw Error('5999 端口被其他服务占用，请关闭旧 AutoRename 后重试。');
-      const python=process.env.BGM_RENAME_PYTHON||path.join(project,'.venv/Scripts/python.exe');
-      if(!fs.existsSync(python))throw Error('找不到 Python 环境，请设置 BGM_RENAME_PYTHON：'+python);
-      const log=fs.openSync(path.join(target,'integration-service.log'),'a');
-      const child=spawn(python,['-m','src.start'],{cwd:project,env:{...process.env,BGM_RENAME_DATA:target,BGM_RENAME_HOST:'127.0.0.1'},windowsHide:true,detached:true,stdio:['ignore',log,log]});
-      fs.closeSync(log);let failure;child.on('error',e=>failure=e);child.unref();
-      for(let i=0;i<100;i++){if(failure)throw failure;status=await health();if(status)break;await delay(300);}
-      if(!status)throw Error('整理服务未就绪，查看 '+path.join(target,'integration-service.log'));
-    }
-    const sameDirectory=(a,b)=>{if(path.resolve(a).toLowerCase()===path.resolve(b).toLowerCase())return true;try{const x=fs.statSync(a,{bigint:true}),y=fs.statSync(b,{bigint:true});return x.ino!==0n&&x.ino===y.ino&&x.dev===y.dev;}catch{return false;}};
-    if(status.service!=='bangumi-rename'||!sameDirectory(status.data_path,target))throw Error('整理服务使用了其他数据目录，请关闭该服务后重试。');
-    if(status.api_version!==1)throw Error('整理引擎仍是旧版本，请重启整理服务后重试。');
-    return target;
-  }
-  async function ready(){if(!pending)pending=ensure().finally(()=>pending=null);return pending;}
-  async function request(method,route,body){
-    const target=await ready();
-    const {token}=JSON.parse(await fs.promises.readFile(path.join(target,'desktop-api.json'),'utf8'));
+let signatureMemo;
+function sourceSignature(project){
+  if(signatureMemo?.project===project&&Date.now()-signatureMemo.time<2000)return signatureMemo.value;
+  const root=path.join(project,'src'),files=[];
+  function walk(folder){for(const entry of fs.readdirSync(folder,{withFileTypes:true})){const file=path.join(folder,entry.name);if(entry.isDirectory()&&entry.name!=='__pycache__')walk(file);else if(entry.isFile()&&entry.name.endsWith('.py'))files.push(file);}}
+  walk(root);files.sort((a,b)=>{a=path.relative(root,a).replaceAll('\\','/');b=path.relative(root,b).replaceAll('\\','/');return a<b?-1:a>b?1:0;});
+  const hash=require('node:crypto').createHash('sha256');for(const file of files){hash.update(path.relative(root,file).replaceAll('\\','/'));hash.update('\0');hash.update(fs.readFileSync(file));}
+  const value=hash.digest('hex');signatureMemo={project,time:Date.now(),value};return value;
+}
+async function rawRequest(target,method,route,body){
+  const {token}=JSON.parse(await fs.promises.readFile(path.join(target,'desktop-api.json'),'utf8'));
     return new Promise((resolve,reject)=>{
       const content=body===undefined?null:JSON.stringify(body);
       const req=http.request({hostname:'127.0.0.1',port:5999,path:'/integration/v1/'+route,method,
@@ -92,7 +80,61 @@ function create({directory,onReturn}){
       });
       req.setTimeout(15000,()=>req.destroy(Error('整理服务响应超时，请稍后刷新')));req.on('error',reject);if(content)req.write(content);req.end();
     });
+}
+function serviceConflict(status,target,project,sameDirectory){
+  if(status.service!=='bangumi-rename'||!sameDirectory(status.data_path,target))return '5999 端口由其他服务或其他数据目录占用，本次没有停止该服务';
+  if(!status.engine_path)return '5999 端口运行的是使用同一数据目录的旧版整理服务，请退出旧整理服务后重试';
+  if(!sameDirectory(status.engine_path,project))return '5999 端口运行的是其他源码目录的整理服务：'+status.engine_path+'。请退出该服务后重试';
+  return null;
+}
+function create({directory,onReturn}){
+  let pending,attachedPid;
+  const outstanding=new Set();
+  async function ensure(){
+    const project=sourceRoot();
+    if(!fs.existsSync(path.join(project,'src/desktop_service.py')))throw Error('找不到桌面整理后台：'+project);
+    const target=await prepare(directory,project);
+    const signature=sourceSignature(project);
+    const sameDirectory=(a,b)=>{if(!a||!b)return false;if(path.resolve(a).toLowerCase()===path.resolve(b).toLowerCase())return true;try{const x=fs.statSync(a,{bigint:true}),y=fs.statSync(b,{bigint:true});return x.ino!==0n&&x.ino===y.ino&&x.dev===y.dev;}catch{return false;}};
+    let status=await health();
+    if(status){
+      const conflict=serviceConflict(status,target,project,sameDirectory);if(conflict)throw Error(conflict);
+      if(status.api_version!==1)throw Error('整理后台接口版本不兼容');
+      if(status.mode!=='desktop'||!(status.engine_revision>=5))throw Error('正在运行旧网页整理服务，请先退出旧服务后使用桌面后台');
+      if((status.source_signature!==signature||status.draining)&&!outstanding.size&&!status.active_jobs){
+        await rawRequest(target,'POST','control/shutdown',{});
+        for(let i=0;i<100;i++){await delay(100);status=await health();if(!status)break;}
+        if(status)throw Error('整理后台尚未退出，稍后会自动重试');
+      }
+    }
+    if(!status){
+      if(await occupied(5999))throw Error('5999 端口被其他服务占用');
+      const windowless=path.join(project,'.venv/Scripts/pythonw.exe');
+      const python=process.env.BGM_RENAME_PYTHON||(process.platform==='win32'&&fs.existsSync(windowless)?windowless:path.join(project,'.venv/Scripts/python.exe'));
+      if(!fs.existsSync(python))throw Error('找不到 Python 环境：'+python);
+      const log=fs.openSync(path.join(target,'integration-service.log'),'a');
+      let child;
+      try{child=spawn(python,['-m','src.desktop_service'],{cwd:project,env:{...process.env,BGM_RENAME_DATA:target,BGM_RENAME_HOST:'127.0.0.1'},windowsHide:true,detached:true,stdio:['ignore',log,log]});}finally{fs.closeSync(log);}
+      let failure;child.on('error',e=>failure=e);child.unref();
+      for(let i=0;i<100;i++){if(failure)throw failure;status=await health();if(status)break;await delay(300);}
+      if(!status)throw Error('整理后台未就绪，请查看 integration-service.log');
+      if(status.mode!=='desktop'||!sameDirectory(status.data_path,target)||!sameDirectory(status.engine_path,project))throw Error('整理后台身份校验失败');
+    }
+    if(attachedPid!==status.pid){
+      await rawRequest(target,'POST','control/attach',{pid:Number(process.env.BGM_DESKTOP_OWNER_PID)||process.pid});
+      attachedPid=status.pid;
+    }
+    return target;
   }
+  async function ready(){if(!pending)pending=ensure().finally(()=>pending=null);return pending;}
+  async function request(method,route,body){
+    const target=await ready();
+    const result=await rawRequest(target,method,route,body);
+    if(result.job_id)outstanding.add(result.job_id);
+    if(route.startsWith('jobs/')&&['completed','failed'].includes(result.state))outstanding.delete(result.id);
+    return result;
+  }
+
   return {ready,request,async action(action,body){return request('POST','action/'+encodeURIComponent(action),body||{});},onReturn};
 }
-module.exports={create,prepare,dataPath,sourceRoot};
+module.exports={create,prepare,dataPath,sourceRoot,sourceSignature,serviceConflict};

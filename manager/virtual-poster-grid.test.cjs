@@ -10,14 +10,14 @@ test('virtual rows cover the final partial row without a height jump',()=>{
   assert.deepEqual(range(0,24,600,layout.stride,0),{start:0,end:0});
 });
 test('mount keeps only nearby cards, batches scroll events, and releases rows on navigation',()=>{
-  let resizeCallback,disconnected=false,released=0,created=0;const pending=new Map();let sequence=0;
+  let resizeCallback,disconnected=false,released=0,created=0,minimum=152;const pending=new Map();let sequence=0;
   const document={activeElement:null,createElement(){return element();}};
   function element(){return {ownerDocument:document,children:[],style:{},listeners:new Map(),clientWidth:1100,clientHeight:600,scrollTop:0,
     appendChild(child){this.insertBefore(child,null);},insertBefore(child,next){child.parent=this;const i=this.children.indexOf(next);this.children.splice(i<0?this.children.length:i,0,child);},
     remove(){if(this.parent)this.parent.children.splice(this.parent.children.indexOf(this),1);},contains(){return false;},
     addEventListener(name,fn){this.listeners.set(name,fn);},removeEventListener(name){this.listeners.delete(name);},getBoundingClientRect(){return {top:this===root?24-viewport.scrollTop:0};}};}
   const root=element(),viewport=element();
-  const window={getComputedStyle:()=>({getPropertyValue:()=>152,columnGap:'20px',rowGap:'26px'}),requestAnimationFrame(fn){pending.set(++sequence,fn);return sequence;},cancelAnimationFrame(id){pending.delete(id);}};
+  const window={getComputedStyle:()=>({getPropertyValue:name=>name==='--poster-min'?minimum:0,columnGap:'20px',rowGap:'26px'}),requestAnimationFrame(fn){pending.set(++sequence,fn);return sequence;},cancelAnimationFrame(id){pending.delete(id);}};
   class Observer{constructor(fn){resizeCallback=fn;}observe(){}disconnect(){disconnected=true;}}
   const instance=mount({root,viewport,items:Array.from({length:332},(_,i)=>i),renderItem:i=>{created++;const el=element();el.item=i;return el;},releaseItem:()=>released++,window,ResizeObserver:Observer});
   const count=()=>root.children.reduce((n,row)=>n+row.children.length,0);
@@ -28,5 +28,12 @@ test('mount keeps only nearby cards, batches scroll events, and releases rows on
   viewport.scrollTop=9500;viewport.listeners.get('scroll')();for(const [id,fn]of pending){pending.delete(id);fn();}
   const ordered=root.children.map(row=>row.children[0].item);assert.deepEqual(ordered,[...ordered].sort((a,b)=>a-b));
   root.clientWidth=800;resizeCallback();assert.ok(count()<=20);
+  const oldLayout=geometry(root.clientWidth,minimum,20,26,332);const visibleIndex=Math.floor((viewport.scrollTop-24)/oldLayout.stride)*oldLayout.columns;minimum=240;instance.refresh();assert.ok(viewport.scrollTop>0);assert.ok(root.children.some(row=>row.children.some(card=>card.item===visibleIndex)));assert.ok(count()<=20);
+  const same=root.children[0],before=created;
+  instance.setItems(Array.from({length:332},(_,i)=>i));assert.equal(root.children[0],same);assert.equal(created,before);
+  const changed=Array.from({length:332},(_,i)=>i);changed[same.children[0].item]=-1;
+  instance.setItems(changed);assert.notEqual(root.children[0],same);assert.ok(root.children[0].children.some(card=>card.item===-1));
+  instance.setItems([]);assert.equal(root.children.length,0);assert.equal(root.style.height,'0px');
+  instance.setItems([100,101]);assert.equal(count(),2);
   instance.destroy();assert.equal(root.children.length,0);assert.equal(disconnected,true);assert.equal(viewport.listeners.has('scroll'),false);
 });

@@ -16,16 +16,16 @@ async function loadCatalogue(fetchPage){
 function episodeBindings(work){
   const bindings=new Map();
   function add(id,file){if(!id||!file.path)return;const key=String(id);if(!bindings.has(key))bindings.set(key,new Map());const files=bindings.get(key),identity=normalized(file.path),old=files.get(identity);if(!old||file.availability)files.set(identity,{...old,...file});}
-  for(const kind of ['EPDetails','SPDetails'])for(const slot of Object.values(work[kind]||{}))for(const version of slot.Versions||[{path:slot.AbsolutePath||(slot.URL&&path.resolve(work.URL,slot.URL))}])add(slot.EpisodeID,version);
+  for(const kind of ['EPDetails','SPDetails'])for(const slot of Object.values(work[kind]||{}))for(const version of slot.Versions||[{path:slot.AbsolutePath||(slot.URL&&path.resolve(work.URL,slot.URL))}]){add(slot.EpisodeID,version);if(slot.Collection)for(const id of slot.EpisodeIDs||[])add(id,version);}
   for(const file of [...(work.RenameBinding?.resources||[]),...(work.RenameBinding?.files||[]),...(work.RenameBinding?.invalidResources||[])]){
     if(file.subjectId&&String(file.subjectId)!==String(work.bgmID))continue;
-    if(file.availability!=='removed')add(file.episodeId,file);
+    if(file.availability!=='removed'){add(file.episodeId,file);if(file.collection)for(const id of file.episodeIds||[])add(id,file);}
   }
   return bindings;
 }
 function regularChapters(work,episodes,today){
   if(!today){const now=new Date();today=[now.getFullYear(),String(now.getMonth()+1).padStart(2,'0'),String(now.getDate()).padStart(2,'0')].join('-');}
-  const bindings=episodeBindings(work),slots=Object.entries(work.EPDetails||{}),used=new Set();
+  const bindings=episodeBindings(work),slots=Object.entries(work.EPDetails||{}).filter(([,slot])=>!slot.Collection),used=new Set();
   const regular=episodes.filter(ep=>Number(ep.type)===0);
   const rows=regular.map(episode=>{
     const exact=slots.filter(([,slot])=>slot.EpisodeID&&String(slot.EpisodeID)===String(episode.id));

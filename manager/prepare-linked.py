@@ -1,4 +1,4 @@
-"""Prepare the original bgm.res UI with source-level binding changes, offline.
+"""Prepare the current bgm.res desktop runtime, offline.
 
 Uses the already downloaded official portable package's runtime and dependencies.
 Never modifies the official installation or user's media.
@@ -41,9 +41,11 @@ app_dir = runtime / 'resources/app'
 app_dir.mkdir(parents=True, exist_ok=True)
 (app_dir / 'package.json').write_text(json.dumps({'name':'bgm-res-linked','version':'0.19.0','main':'index.cjs'}), encoding='utf-8')
 (app_dir / 'index.cjs').write_text(
-    "const {app}=require('electron'); const path=require('path'); "
-    "app.setPath('userData',process.env.BGM_RES_DATA_DIR); "
-    "process.chdir("+json.dumps(str(repo))+"); require("+json.dumps(str(repo/'index.js'))+");", encoding='utf-8')
-launcher = '@echo off\r\nset "BGM_RES_DATA_DIR=%APPDATA%\\bgm.res-linked"\r\nset "BGM_RENAME_PROJECT=%~dp0..\\Bangumi_Auto_Rename"\r\nset "BGM_RENAME_DATA=%BGM_RENAME_PROJECT%\\data"\r\nstart "bgm.res linked" /D "%~dp0" "%~dp0.linked-desktop\\bgm.res.exe"\r\n'
-(repo/'启动原版绑定.cmd').write_text(launcher, encoding='utf-8')
-print(repo/'启动原版绑定.cmd')
+    "const {app}=require('electron'); const path=require('path'); const root="+json.dumps(str(repo))+"; "
+    "const storage=require(path.join(root,'js/app-storage.cjs')).resolveStorage({project:root,appData:app.getPath('appData')}); "
+    "process.env.BGM_RES_DATA_DIR=storage.directory; process.env.BGM_RENAME_DATA=storage.renameData; "
+    "process.env.BGM_RENAME_PROJECT=storage.engine; app.setPath('userData',storage.directory); "
+    "process.chdir(root); require(path.join(root,'index.js'));", encoding='utf-8')
+launcher = '@echo off\r\nset "BGM_RES_DATA_DIR=%APPDATA%\\bgm.res-linked"\r\nset "BGM_RENAME_PROJECT=%~dp0engine"\r\nset "BGM_RENAME_DATA=%BGM_RES_DATA_DIR%\\rename"\r\nstart "bgm.res linked" /D "%~dp0" "%~dp0.linked-desktop\\bgm.res.exe"\r\n'
+(repo/'启动 bgm.res.cmd').write_text(launcher, encoding='utf-8')
+print(repo/'启动 bgm.res.cmd')

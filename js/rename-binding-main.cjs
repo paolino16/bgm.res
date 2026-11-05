@@ -7,6 +7,11 @@ async function start({ipcMain,app,sysdata,Datastore}){
   const db=new Datastore({filename,autoload:false});await new Promise((r,j)=>db.loadDatabase(e=>e?j(e):r()));
   const docs=await new Promise((r,j)=>db.find({},(e,d)=>e?j(e):r(d)));const data=Object.fromEntries(docs.map(d=>[d._id,d.data]));
   const save=(k,v)=>new Promise((r,j)=>db.update({_id:k},{$set:{data:coreClone(v)}},{upsert:true},e=>e?j(e):r()));
+  for(const [key,work]of Object.entries(data)){
+    if(!work?.Cover)continue;
+    const cover=require('./cover-path.cjs').resolveCover(work.Cover,directory);
+    if(cover!==work.Cover){work.Cover=cover;delete work.DisplayCover;await save(key,work);}
+  }
   const {BangumiNetwork}=require('./bangumi-network.cjs');
   const network=new BangumiNetwork({net:require('electron').net,directory});
   const thumbnails=new (require('./cover-thumbnails.cjs').CoverThumbnails)({directory,nativeImage:require('electron').nativeImage});
@@ -15,7 +20,7 @@ async function start({ipcMain,app,sysdata,Datastore}){
   });
   const integration=require('./rename-integration.cjs');
   let report={works:0,errors:[]};
-  async function importBindings(){
+  async function importBindings({taskId}={}){
     const nextReport={works:0,errors:[],checked:0,removed:0};
     const dataDir=fs.existsSync(path.join(directory,'rename')) ? path.join(directory,'rename') : process.env.BGM_RENAME_DATA;
     if(dataDir){
@@ -23,6 +28,7 @@ async function start({ipcMain,app,sysdata,Datastore}){
       let max=Math.max(0,...Object.keys(data).filter(k=>/^WorkSaveNo\d+$/.test(k)).map(k=>Number(k.slice(10))));
       for(const raw of parsed.groups){
         let key=Object.keys(data).find(k=>/^WorkSaveNo\d+$/.test(k)&&String(data[k].bgmID)===raw.id);
+        if(!require('./task-library-cleanup.cjs').needsTaskRefresh(raw,data[key],taskId))continue;
         if(!key)key='WorkSaveNo'+(++max);
         const group=await require('./file-health.cjs').inspect(raw,data[key]);
         const previous=data[key];
@@ -56,6 +62,18 @@ async function start({ipcMain,app,sysdata,Datastore}){
   const decorate=()=>subtitles.decorate(thumbnails.decorate(coreClone(data)));
   const getWork=id=>{if(!/^WorkSaveNo\d+$/.test(id)||!data[id])throw Error('番剧不存在');return data[id];};
   ipcMain.handle('library:read',decorate);
+  ipcMain.handle('library:explorer',async(_event,{id,path:target,reveal=false,original=false})=>{
+    const work=getWork(id);
+    const registered=[work.URL,...(work.RenameBinding?.files||[]).map(file=>file.path),...['EPDetails','SPDetails'].flatMap(kind=>Object.values(work[kind]||{}).flatMap(slot=>[slot.AbsolutePath,...(slot.Versions||[]).map(v=>v.path)]))].filter(Boolean);
+    if(!path.isAbsolute(target)||!registered.some(file=>core.normalized(file)===core.normalized(target)))throw Error('只能打开当前作品已登记的文件位置');
+    if(original){
+      const source=require('./desktop-actions.cjs').sourcePath(work,target);
+      if(!source)throw Error('没有记录这个文件的原始来源路径');
+      const folder=path.dirname(source);
+      try{await fs.promises.access(folder);}catch{throw Error('原视频文件夹不存在或当前不可访问：'+folder);}
+      await require('./explorer-window.cjs').openExplorer({file:folder,shell:require('electron').shell});
+    }else await require('./explorer-window.cjs').openExplorer({file:target,reveal:Boolean(reveal),shell:require('electron').shell});
+  });
   ipcMain.handle('subtitles:details',(_event,id)=>subtitles.details(getWork(id)));
   ipcMain.handle('subtitles:scan',async(_event,{id,force=false})=>subtitles.scan(getWork(id),Boolean(force)));
   ipcMain.handle('subtitles:scan-all',()=>subtitles.startAll(data));
@@ -79,6 +97,28 @@ async function start({ipcMain,app,sysdata,Datastore}){
     if(!checking)checking=transaction(async()=>{const report=await importBindings();await thumbnails.prepare(data);return {data:decorate(),report};}).then(result=>{scheduleMetadata();return result;}).finally(()=>{checking=null;});
     return checking;
   });
+  ipcMain.handle('library:collection',(_event,{id,path:target,episodeIds})=>transaction(async()=>{
+    const current=getWork(id);
+    require('./file-operations.cjs').select(current,[target],false);
+    if(!Array.isArray(episodeIds)||episodeIds.length<2||new Set(episodeIds.map(String)).size!==episodeIds.length)throw Error('合集请选择至少两个不同章节');
+    const episodes=await require('./episode-catalog.cjs').loadCatalogue(async offset=>{
+      const response=await network.request({url:'https://api.bgm.tv/v0/episodes?subject_id='+encodeURIComponent(current.bgmID)+'&limit=100&offset='+offset});
+      if(response.status!==200||response.error)throw Error('无法验证章节，请稍后重试');return JSON.parse(response.body);
+    });
+    if(episodeIds.some(id=>!episodes.some(ep=>String(ep.id)===String(id))))throw Error('章节不属于当前条目');
+    let recent=data.LastWatched,renamedPaths;
+    const next=await require('./collection-rename.cjs').renameCollection({work:current,file:target,episodeIds,
+      dataDir:integration.dataPath(directory),persist:async(next,previous,mapping)=>{
+        recent=core.remapRecent(data.LastWatched,previous,next);renamedPaths=mapping;
+        if(data.LastWatched)await save('LastWatched',recent);
+        try{await save(id,next);}catch(error){if(data.LastWatched)await save('LastWatched',data.LastWatched);throw error;}
+      }});
+    data[id]=next;if(data.LastWatched)data.LastWatched=recent;
+    const rename=require('./collection-rename.cjs');
+    for(const [oldPath,newPath]of renamedPaths||[]){const cached=subtitles.index.get(core.normalized(oldPath));if(cached){subtitles.index.delete(core.normalized(oldPath));subtitles.index.set(core.normalized(newPath),rename.replacePaths(cached,renamedPaths));}}
+    await subtitles.save().catch(error=>console.error('Subtitle cache save failed:',error.message));
+    return decorate();
+  }));
   ipcMain.handle('library:edit',(_event,{id,changes})=>transaction(async()=>{
     const current=data[id];if(!/^WorkSaveNo\d+$/.test(id)||!current)throw Error('番剧不存在');
     const next=coreClone(current);
@@ -128,8 +168,8 @@ async function start({ipcMain,app,sysdata,Datastore}){
       return {data:decorate(),trashed:file.path,warning};
     });
   });
-  const organizer=integration.create({directory,onReturn:()=>transaction(async()=>{
-    await importBindings();await thumbnails.prepare(data);
+  const organizer=integration.create({directory,onReturn:({taskId}={})=>transaction(async()=>{
+    await importBindings({taskId});await thumbnails.prepare(data);
     for(const window of require('electron').BrowserWindow.getAllWindows())if(!window.isDestroyed())window.webContents.send('library:updated');
   }).then(result=>{scheduleMetadata();return result;})});
   ipcMain.handle('library:organize',()=>organizer.request('GET','tasks'));
@@ -138,6 +178,7 @@ async function start({ipcMain,app,sysdata,Datastore}){
     return organizer.action(action,body);
   });
   const refreshedJobs=new Set();
+  const jobRefreshes=new Map();
   ipcMain.handle('organizer:job',async(_event,id)=>{
     if(!/^[a-f0-9]{32}$/.test(id))throw Error('无效作业编号');
     const job=await organizer.request('GET','jobs/'+id);
@@ -149,19 +190,29 @@ async function start({ipcMain,app,sysdata,Datastore}){
         }
         if(data.LastWatched)await save('LastWatched',data.LastWatched);
       });
-      await organizer.onReturn();refreshedJobs.add(id);
+      await organizer.onReturn({taskId:job.task_id});refreshedJobs.add(id);
     }
     if(job.state==='completed'&&['execute','subtitle-execute'].includes(job.action)&&!refreshedJobs.has(id)){
-      await organizer.onReturn();
-      if(job.action==='subtitle-execute'){for(const work of Object.values(data))if(work?.RenameBinding?.files?.some(file=>file.taskId===job.task_id))await subtitles.scan(work);
-        for(const window of require('electron').BrowserWindow.getAllWindows())if(!window.isDestroyed())window.webContents.send('library:updated');}
-      refreshedJobs.add(id);
+      if(!jobRefreshes.has(id))jobRefreshes.set(id,(async()=>{
+        if(job.action==='subtitle-execute'){
+          const registered=Object.values(data).flatMap(work=>(work?.RenameBinding?.files||[]).filter(file=>file.taskId===job.task_id).map(file=>file.path));
+          const allowed=new Set(registered.map(core.normalized));
+          const affected=(job.result?.videos||registered).filter(file=>allowed.has(core.normalized(file)));
+          try{if(affected.length)await subtitles.scanFiles(affected,{externalOnly:true});}catch(error){return '字幕已导入，但字幕状态更新失败：'+error.message;}
+          for(const window of require('electron').BrowserWindow.getAllWindows())if(!window.isDestroyed())window.webContents.send('library:updated');
+        }else await organizer.onReturn({taskId:job.task_id});
+        return '';
+      })().catch(error=>{jobRefreshes.delete(id);throw error;}));
+      const warning=await jobRefreshes.get(id);if(warning)job.result={...job.result,warning};refreshedJobs.add(id);
+    }
+    if(job.state==='completed'&&job.action==='subtitle-execute'&&jobRefreshes.has(id)){
+      const warning=await jobRefreshes.get(id);if(warning)job.result={...job.result,warning};
     }
     return job;
   });
   ipcMain.handle('organizer:pick',async(event,kind)=>{
     const {dialog,BrowserWindow}=require('electron');
-    const options={title:kind==='file'?'选择视频文件':'选择整理目录',properties:kind==='file'?['openFile','multiSelections']:['openDirectory','multiSelections']};
+    const options=require('./organizer-picker.cjs').optionsFor(kind);
     const owner=BrowserWindow.fromWebContents(event.sender);
     const result=await dialog.showOpenDialog(owner,options);return result.canceled?[]:result.filePaths;
   });

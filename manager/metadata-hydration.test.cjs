@@ -25,3 +25,12 @@ test('date backfill uses cached metadata and preserves an existing cover and loc
 test('unpublished dates remain unknown without repeated fetches on every refresh',async()=>{
  let calls=0;const h=harness({request:async()=>{calls++;return {status:200,body:'{"date":null}'};}});h.data.one={RenameBinding:{},bgmID:'42',Cover:'file:///existing.jpg',Year:'2027'};await h.service.hydrate();await h.service.hydrate();assert.equal(calls,1);assert.equal(h.data.one.AirDate,'');assert.equal(h.data.one.Year,'2027');
 });
+
+test('rank backfill uses cached subject data even when artwork and date already exist',async()=>{
+ let calls=0;const h=harness({cachedSubject:async()=>{calls++;return {date:'2024-04-06',rating:{rank:123,score:8}};},request:async()=>{throw Error('must use cache');}});
+ h.data.one={RenameBinding:{},bgmID:'42',Cover:'file:///custom.jpg',Name:'local',AirDate:'2024-04-06',AirDateChecked:true,Score:8,EPDetails:{EP1:{Condition:'Watched'}}};
+ await h.service.hydrate();assert.equal(h.data.one.Rank,123);assert.equal(h.data.one.RankChecked,true);assert.equal(h.data.one.Name,'local');assert.equal(h.data.one.EPDetails.EP1.Condition,'Watched');await h.service.hydrate();assert.equal(calls,1);
+});
+test('unranked subjects do not show zero rank or retry on every hydration',async()=>{
+ for(const rank of [0,null,undefined,-1,1.5]){let calls=0;const h=harness({cachedSubject:async()=>{calls++;return {rating:{rank}};}});h.data.one={RenameBinding:{},bgmID:'42',Cover:'file:///cover.jpg',AirDateChecked:true};await h.service.hydrate();await h.service.hydrate();assert.equal(h.data.one.Rank,null);assert.equal(h.data.one.RankChecked,true);assert.equal(calls,1);}
+});

@@ -26,13 +26,18 @@ class BangumiNetwork{
     if(!/^\d+$/.test(String(id)))return null;
     const url='https://api.bgm.tv/v0/subjects/'+id;
     const filename=path.join(this.directory,'metadata-cache',createHash('sha256').update(url).digest('hex')+'.json');
-    try{return JSON.parse(JSON.parse(await fs.readFile(filename,'utf8')).body);}catch{return null;}
+    try{return this.relocateSubject(JSON.parse(JSON.parse(await fs.readFile(filename,'utf8')).body));}catch{return null;}
+  }
+  relocateSubject(info){
+    if(info.images)for(const key of Object.keys(info.images))info.images[key]=require('./cover-path.cjs').resolveCover(info.images[key],this.directory);
+    return info;
   }
   async request(options){
     const u=new URL(options.url);if(u.hostname!=='api.bgm.tv'||u.protocol!=='https:')throw Error('只允许 Bangumi API');
     const isPublic=(options.method||'GET').toUpperCase()==='GET'&&!Object.keys(options.headers||{}).some(k=>k.toLowerCase()==='authorization');
     const hash=createHash('sha256').update(u.href).digest('hex'),filename=path.join(this.directory,'metadata-cache',hash+'.json');
     let cached;if(isPublic)try{cached=JSON.parse(await fs.readFile(filename,'utf8'));}catch{}
+    if(cached&&/^\/v0\/subjects\/\d+$/.test(u.pathname))try{cached.body=JSON.stringify(this.relocateSubject(JSON.parse(cached.body)));}catch{}
     if(cached&&Date.now()-cached.saved<10*60*1000)return {status:200,body:cached.body,cached:true};
     let response;
     try{response=await this.raw(options);}catch(e){if(cached)return {status:200,body:cached.body,cached:true,stale:true};throw e;}
