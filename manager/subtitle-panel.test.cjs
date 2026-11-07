@@ -6,13 +6,15 @@ function fixture(t,options={}){
   append(...items){this.children.push(...items);},appendChild(item){this.children.push(item);return item;},replaceChildren(...items){this.children=items;},add(item){this.children.push(item);},setAttribute(name,value){this[name]=value;},
   querySelector(selector){return all(this).find(item=>(selector==='[data-subtitle-execute]'&&item.dataset?.subtitleExecute!==undefined)||(selector==='[data-subtitle-count]'&&item.dataset?.subtitleCount!==undefined))||null;}};}
  function all(root){return [root,...(root.children||[]).flatMap(all)];}
- const host=node('main'),calls=[],jobs=new Map(),video1=path.resolve('library/Show EP01.mkv'),video2=path.resolve('library/Show EP02.mkv');let selected=[path.resolve('subs/Show EP01.chs.ass'),path.resolve('subs/Show EP02.srt')],sequence=0;
+ const host=node('main'),calls=[],jobs=new Map(),video1=path.resolve('library/Show EP01.mkv'),video2=path.resolve(options.twoVersions?'library/Show EP01 [Other].mkv':'library/Show EP02.mkv');let selected=[path.resolve('subs/Show EP01.chs.ass'),path.resolve('subs/Show EP02.srt')],sequence=0;
  const report={summary:{total:2,covered:0},files:[]};
  const ipc={async invoke(channel,body){calls.push({channel,body});
   if(channel==='subtitles:scan'||channel==='subtitles:details')return report;
+  if(channel==='subtitles:mark'){for(const file of report.files)file.manual=body.value||undefined;return report;}
   if(channel==='organizer:pick')return selected;
-  if(channel==='subtitles:context')return {tasks:[{id:'task1',files:[video1]},{id:'task2',files:[video2]}]};
-  if(channel==='organizer:action'){const id='job'+(++sequence);if(options.failSecondImport&&body.action==='subtitle-execute'&&body.body.id==='task2'){jobs.set(id,{state:'failed',error:'测试导入失败'});return {job_id:id};}jobs.set(id,{state:'completed',result:body.action==='subtitle-preview'?{videos:[video1,video2],rows:(body.body.files||[body.body.folder]).map((source,i)=>({source,video:[video1,video2][i],suffix:'chs',reason:'按集数匹配'}))}:{message:'已导入',videos:body.body.rows.map(row=>row.video)}});return {job_id:id};}
+  if(channel==='subtitles:context'&&options.sameTask)return {tasks:[{id:'task1',files:[video1,video2]}]};
+  if(channel==='subtitles:context')return {chapters:options.chapters,tasks:[{id:'task1',files:[video1]},{id:'task2',files:[video2]}]};
+  if(channel==='organizer:action'){const id='job'+(++sequence);if(options.failSecondImport&&body.action==='subtitle-execute'&&body.body.id==='task2'){jobs.set(id,{state:'failed',error:'测试导入失败'});return {job_id:id};}jobs.set(id,{state:'completed',result:body.action==='subtitle-preview'?{videos:[video1,video2],rows:(body.body.files||[body.body.folder]).map((source,i)=>({source,video:options.twoVersions?'':[video1,video2][i],videos:options.autoMatch?[video1,video2]:undefined,candidates:options.twoVersions?[video1,video2]:[],suffix:'chs',reason:'按集数匹配'}))}:{message:'已导入',videos:body.body.rows.map(row=>row.video)}});return {job_id:id};}
   if(channel==='organizer:job')return jobs.get(body);
   throw Error('Unexpected IPC '+channel);
  }};
@@ -48,8 +50,8 @@ test('file filtering and searching use cached results without another IPC reques
 });
 test('import with no selected target remains disabled and clearly reports skipped rows',async t=>{
  const f=fixture(t);await settle();assert.equal(f.button('匹配预览').disabled,true);await f.button('选择字幕文件').onclick();await f.button('匹配预览').onclick();
- const targets=f.all(f.host).filter(n=>n.tag==='select'&&n.children?.some(c=>c.textContent==='跳过'));
- for(const control of targets){control.value='';control.onchange();}
+ const targets=f.all(f.host).filter(n=>n.dataset?.subtitleTarget!==undefined);
+ for(const control of targets){control.checked=false;control.onchange();}
  assert.equal(f.button('确认并导入字幕').disabled,true);assert.match(f.all(f.host).find(n=>n.dataset?.subtitleCount!==undefined).textContent,/将导入 0.*跳过 2/);
 });
 test('file status never presents failed or offline detection as a healthy subtitle result',()=>{
@@ -62,4 +64,42 @@ test('partial import retains only uncompleted rows selected for retry',async t=>
  assert.match(f.calls.findLast(c=>c.channel==='notice').body,/已完成 1 条/);
  assert.match(f.all(f.host).find(n=>n.dataset?.subtitleCount!==undefined).textContent,/将导入 1.*跳过 1/);
  assert.equal(f.button('确认并导入字幕').disabled,false);
+});
+
+test('manual confirmation applies to the entire work outside filtering and has no per-file selector',async t=>{
+ const f=fixture(t);f.report.files=Array.from({length:25},(_,i)=>({path:'D:/Show/EP'+i+'.mkv',state:'checked'}));await settle();
+ const search=f.all(f.host).find(el=>el['aria-label']==='搜索字幕检测结果');search.value='EP0';search.oninput();
+ const manual=f.all(f.host).find(el=>el['aria-label']==='全部视频的人工确认');manual.value='burned';
+ assert.equal(f.all(f.host).filter(el=>el.tag==='select'&&String(el['aria-label']).startsWith('人工确认 ')).length,0);
+ await f.button('确认全部').onclick();
+ assert.deepEqual(f.calls.find(c=>c.channel==='subtitles:mark').body,{id:'WorkSaveNo1',all:true,value:'burned'});
+ assert.ok(f.report.files.every(file=>file.manual==='burned'));
+});
+
+for(const sameTask of [true,false])test('one subtitle imports into both selected versions; same task='+sameTask,async t=>{
+ const f=fixture(t,{twoVersions:true,sameTask});await settle();const source=path.resolve('subs/Show EP01.chs.ass');f.setSelected([source]);await f.button('选择字幕文件').onclick();await f.button('匹配预览').onclick();
+ assert.equal(f.button('确认并导入字幕').disabled,true);
+ const targets=f.all(f.host).filter(n=>n.dataset?.subtitleTarget!==undefined);assert.equal(targets.length,2);
+ for(const target of targets){target.checked=true;target.onchange();}
+ assert.match(f.all(f.host).find(n=>n.dataset?.subtitleCount!==undefined).textContent,/将导入 2 份字幕（1 个源文件）.*跳过 0/);
+ await f.button('确认并导入字幕').onclick();
+ const imports=f.calls.filter(c=>c.channel==='organizer:action'&&c.body.action==='subtitle-execute');assert.equal(imports.length,sameTask?1:2);
+ const rows=imports.flatMap(c=>c.body.body.rows);assert.equal(rows.length,2);assert.ok(rows.every(row=>row.source===source));assert.equal(new Set(rows.map(row=>row.video)).size,2);
+});
+test('partial multi-version import keeps only the failed version selected',async t=>{
+ const f=fixture(t,{twoVersions:true,failSecondImport:true});await settle();f.setSelected([path.resolve('subs/Show EP01.chs.ass')]);await f.button('选择字幕文件').onclick();await f.button('匹配预览').onclick();
+ for(const target of f.all(f.host).filter(n=>n.dataset?.subtitleTarget!==undefined)){target.checked=true;target.onchange();}
+ await f.button('确认并导入字幕').onclick();
+ const targets=f.all(f.host).filter(n=>n.dataset?.subtitleTarget!==undefined);assert.equal(targets.filter(n=>n.checked).length,1);assert.match(targets.find(n=>n.checked).value,/Other/);
+ assert.match(f.all(f.host).find(n=>n.dataset?.subtitleCount!==undefined).textContent,/将导入 1.*跳过 0/);
+ const before=f.calls.length;await f.button('确认并导入字幕').onclick();const retry=f.calls.slice(before).filter(c=>c.channel==='organizer:action'&&c.body.action==='subtitle-execute');assert.equal(retry.length,1);assert.equal(retry[0].body.body.id,'task2');
+});
+
+test('confirmed chapter context reaches preview and all matched versions start selected',async t=>{
+ const chapters=[{id:'EP1',number:1,kind:'EP',videos:['registered']}];const f=fixture(t,{twoVersions:true,autoMatch:true,chapters});await settle();
+ f.setSelected([path.resolve('subs/Show EP01.ass')]);await f.button('选择字幕文件').onclick();await f.button('匹配预览').onclick();
+ const preview=f.calls.find(c=>c.channel==='organizer:action'&&c.body.action==='subtitle-preview');assert.deepEqual(preview.body.body.chapters,chapters);
+ const targets=f.all(f.host).filter(n=>n.dataset?.subtitleTarget!==undefined);assert.equal(targets.filter(n=>n.checked).length,2);assert.equal(f.button('确认并导入字幕').disabled,false);
+ targets[1].checked=false;targets[1].onchange();await f.button('确认并导入字幕').onclick();
+ const imports=f.calls.filter(c=>c.channel==='organizer:action'&&c.body.action==='subtitle-execute');assert.equal(imports.length,1);assert.equal(imports[0].body.body.rows.length,1);
 });

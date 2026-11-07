@@ -169,6 +169,18 @@ def build_adjusted_mapping(plan, edited_rows, *, row_errors=None):
                     mapping.pop(path, None)
                 continue
             target = Path(original['original_target']) if original['original_target'] else None
+            old_group = context.get('original_subtitle_group', context.get('subtitle_group', '')) or ''
+            new_group = context.get('subtitle_group', '') or ''
+            if target and old_group != new_group and original.get('category') != 'extra':
+                from .utils import sanitize_path_component
+                stem = target.stem
+                old_label = f' [{sanitize_path_component(old_group)}]' if old_group else ''
+                if old_label and old_label in stem:
+                    before, _, after = stem.rpartition(old_label)
+                    stem = before + (f' [{new_group}]' if new_group else '') + after
+                elif new_group:
+                    stem += f' [{new_group}]'
+                target = target.with_name(stem + target.suffix)
             if context.get('layout') == 'bangumi':
                 from .bangumi_native import episode_target
                 if context.get('requires_subject_assignment') and not row.get('subject_id'):
@@ -227,11 +239,24 @@ def build_adjusted_mapping(plan, edited_rows, *, row_errors=None):
     return mapping, skipped
 
 
-def check_saved_plan(task_id, revision, rows, *, collect_errors=False):
+def check_saved_plan(task_id, revision, rows, *, collect_errors=False, subtitle_group=None):
     from .trans import Trans
     plan = load_plan(task_id)
     if not plan or plan['revision'] != revision or plan['state'] != 'pending':
         raise ValueError('方案已失效或已执行，请重新打开')
+    if subtitle_group is not None:
+        if not isinstance(subtitle_group, str):
+            raise ValueError('字幕组必须是文字')
+        group = subtitle_group.strip()
+        if len(group) > 120 or any(c in group for c in '<>:"/\\|?*[]') or any(ord(c) < 32 for c in group) or group.endswith('.'):
+            raise ValueError('字幕组不能包含路径符号、方括号或非法字符，且不能超过 120 字')
+        context = plan['context']
+        if group != (context.get('subtitle_group') or ''):
+            if context.get('layout_migration'):
+                raise ValueError('目录迁移方案不能修改字幕组')
+            context.setdefault('original_subtitle_group', context.get('subtitle_group') or '')
+            context['subtitle_group'] = group
+            context.setdefault('task_metadata', {})['subtitle_group'] = group
     row_errors = {}
     mapping, skipped = build_adjusted_mapping(plan, rows, row_errors=row_errors if collect_errors else None)
     if plan['context'].get('layout') == 'bangumi' and not row_errors:
@@ -269,7 +294,7 @@ def check_saved_plan(task_id, revision, rows, *, collect_errors=False):
     plan['draft_rows'] = rows
     _write(_path(task_id), plan)
     # Fingerprint the reviewed decisions. Execution always checks the disk again.
-    token = hashlib.sha256(json.dumps(rows, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+    token = hashlib.sha256(json.dumps({'rows': rows, 'subtitle_group': plan['context'].get('subtitle_group') or ''}, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
     preview = []
     root = Path(plan['root'])
     source_base = root.parent if plan.get('root_is_file') else root

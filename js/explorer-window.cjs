@@ -6,7 +6,8 @@ async function openExplorer({file,reveal=false,shell,focus=focusFolder}){
   const folder=reveal?path.dirname(file):file;
   if(reveal)shell.showItemInFolder(file);
   else{const error=await shell.openPath(folder);if(error)throw Error(error);}
-  await focus(folder);
+  // Opening succeeded; foreground activation is best-effort on Windows.
+  try{await focus(folder);}catch(error){console.warn('Explorer foreground activation failed:',error.message);}
 }
 async function focusFolder(folder){
   if(process.platform!=='win32')return;

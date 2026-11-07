@@ -27,6 +27,13 @@ test('desktop edits are asynchronous, atomic, and cannot change bound file paths
   await assert.rejects(edit({'EPDetails.EP99.Condition':'Watched'}),/章节不存在/);
   await edit({'SpecialEpisodeStates.123':'Watched'});assert.equal(read().WorkSaveNo1.SpecialEpisodeStates['123'],'Watched');
   await assert.rejects(edit({'SpecialEpisodeStates.invalid':'Watched'}),/不支持/);
+  const saved=await edit({DefaultSubtitleGroup:'SweetSub&LoliHouse'});
+  assert.equal(saved.DefaultSubtitleGroup,'SweetSub&LoliHouse');
+  assert.equal(read().WorkSaveNo1.DefaultSubtitleGroup,'SweetSub&LoliHouse');
+  await assert.rejects(edit({DefaultSubtitleGroup:''}),/默认字幕组无效/);
+  await assert.rejects(edit({DefaultSubtitleGroup:123}),/默认字幕组无效/);
+  fail=true;await assert.rejects(edit({DefaultSubtitleGroup:'Other'}),/disk failure/);
+  assert.equal(read().WorkSaveNo1.DefaultSubtitleGroup,'SweetSub&LoliHouse');
   fail=true;await assert.rejects(edit({Name:'Unsaved'}),/disk failure/);
   assert.equal(result.data.WorkSaveNo1.Name,'Show');assert.equal(result.data.WorkSaveNo1.EPDetails.EP1.AbsolutePath,'D:/media/video.mkv');
 });

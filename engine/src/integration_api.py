@@ -36,10 +36,23 @@ def task_path(task_id):
     return TASK_PATH / f'{task_id}.json'
 
 
-def read_task(task_id):
+TASK_SUMMARY_FIELDS = frozenset({
+    'uuid', 'name', 'path', 'bgm_id', 'subject_id', 'subject_ids', 'layout',
+    'review_state', 'error', 'subtitle_group', 'tmdb_id', 'year', 'season_id',
+    'is_anime', 'is_movie', 'use_ai', 'skip_search', 'bangumi_candidates',
+    'selected_subjects', 'recall_warnings', 'schema_version',
+})
+
+
+def read_task(task_id, summary=False):
     from .rename.task_schema import normalize_task
     from .rename.title_evidence import clean_evidence
-    task = normalize_task(json.loads(task_path(task_id).read_text(encoding='utf-8')))
+    raw = json.loads(task_path(task_id).read_text(encoding='utf-8'))
+    if summary:
+        raw = {key: value for key, value in raw.items() if key in TASK_SUMMARY_FIELDS}
+    task = normalize_task(raw)
+    if summary:
+        task = {key: value for key, value in task.items() if key in TASK_SUMMARY_FIELDS}
     candidates = []
     for candidate in task.get('bangumi_candidates') or []:
         if isinstance(candidate, dict) and candidate.get('recall_evidence'):
@@ -139,7 +152,7 @@ def perform(action, body):
                        key=lambda file: file.stat().st_mtime, reverse=True)[:20]
         return [json.loads(file.read_text(encoding='utf-8')) for file in files]
     if action == 'check':
-        checked = plans.check_saved_plan(body['id'], body['revision'], body['rows'], collect_errors=True)
+        checked = plans.check_saved_plan(body['id'], body['revision'], body['rows'], collect_errors=True, subtitle_group=body.get('subtitle_group'))
         return {key: checked[key] for key in ('issues', 'token', 'preview', 'row_errors')}
     if action == 'execute':
         from .rename.review_rollback import finish, seal
@@ -167,16 +180,22 @@ def perform(action, body):
         for identifier in ids:
             task_path(identifier)
         videos, rows = preview_records([get_record(identifier) for identifier in dict.fromkeys(ids)],
-                                      body.get('folder'), body.get('offset', 0), files=body.get('files'))
+                                      body.get('folder'), body.get('offset', 0), files=body.get('files'),
+                                      chapters=body.get('chapters'))
         validated = set()
         for row in rows:
-            if row.get('video'):
-                if row['video'] not in validated:
-                    import_targets(Path(row['source']), row['video'], videos, row.get('suffix'))
-                    validated.add(row['video'])
-                output = subtitle_target(Path(row['source']), row['video'], row.get('suffix'))
-                row['target'] = str(output)
-                row['existing'] = output.exists() or output.is_symlink()
+            targets = []
+            for video in row.get('videos', [row['video']] if row.get('video') else []):
+                if video not in validated:
+                    import_targets(Path(row['source']), video, videos, row.get('suffix'))
+                    validated.add(video)
+                output = subtitle_target(Path(row['source']), video, row.get('suffix'))
+                targets.append({'video': video, 'target': str(output),
+                                'existing': output.exists() or output.is_symlink()})
+            if targets:
+                row['targets'] = targets
+                if len(targets) == 1:
+                    row['target'], row['existing'] = targets[0]['target'], targets[0]['existing']
         return {'videos': list(videos), 'rows': rows}
     if action == 'subtitle-execute':
         from .rename.subtitle_import import execute_import
@@ -223,13 +242,13 @@ def register(app, lifecycle=None):
             raise HTTPException(403, '无效的桌面访问令牌')
 
     @app.get('/integration/v1/tasks')
-    async def tasks(request: Request):
+    async def tasks(request: Request, summary: bool = False):
         authorize(request)
         def snapshot():
             result, errors = [], []
             for file in sorted(TASK_PATH.glob('*.json'), key=lambda p: p.stat().st_mtime_ns, reverse=True):
                 try:
-                    task = read_task(file.stem)
+                    task = read_task(file.stem, summary=summary)
                     plan_file = DATA_PATH / 'rename_plans' / file.name
                     state = None
                     if plan_file.exists():

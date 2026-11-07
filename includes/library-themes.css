@@ -16,7 +16,7 @@ body[data-theme] .nav-item:hover { background:var(--hover);color:var(--text); }
 body[data-theme] .nav-item.active,body[data-theme] .nav-item.active:hover { color:var(--accent);background:var(--accent-bg);border-color:var(--accent);box-shadow:none; }
 body[data-theme] .nav-item>b { background:var(--raised);color:inherit; }
 body[data-theme] :is(.settings-card,.organizer-task,.resource-list,.file-panel,.plan-review-row,.subtitle-import,.subtitle-import-row,.subtitle-file-list,.plan-subject-assignment) { background:var(--panel);border-color:var(--line);box-shadow:none; }
-body[data-theme] :is(.organizer-source-card,.plan-origin .organizer-source-card) { background:var(--panel);border-color:var(--line); }
+body[data-theme] :is(.organizer-source-card,.plan-origin .organizer-source-card) { background:transparent;border-color:transparent; }
 body[data-theme] .organizer-source-card code { color:var(--muted); }
 body[data-theme] :is(.button,.chapter-action) { background:var(--raised);border-color:var(--control-line);color:var(--text); }
 body[data-theme] :is(.button,.chapter-action):hover { background:var(--hover);border-color:var(--accent);color:var(--text); }

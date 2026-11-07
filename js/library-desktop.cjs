@@ -3,11 +3,13 @@ const {ipcRenderer:ipc,shell}=require('electron');
 const fs=require('fs');
 const path=require('path');
 const {pathToFileURL}=require('url');
-const {mediaType,watchedThrough,episodePath,episodeLink,sourcePath}=require('./js/desktop-actions.cjs');
+const {defaultChapter,mediaType,watchedThrough,episodePath,episodeLink,sourcePath,subtitleGroup,preferredVersion}=require('./js/desktop-actions.cjs');
 const {specialWatched,specialThrough,specialToggle}=require('./js/special-chapter-actions.cjs');
 const {loadCatalogue,specialChapters,regularChapters}=require('./js/episode-catalog.cjs');
 const {summaryLabel}=require('./js/subtitle-index.cjs');
 const {airDateLabel,compareAirDates}=require('./js/air-date.cjs');
+const {subjectStaff}=require('./js/subject-staff.cjs');
+const {hasMissingRegular}=require('./js/poster-availability.cjs');
 const {bangumiDuration,formatDuration}=require('./js/media-duration.cjs');
 const $=selector=>document.querySelector(selector);
 const appearanceUI=require('./js/desktop-appearance.cjs');
@@ -33,11 +35,23 @@ const savedSort=localStorage.getItem('library-sort');
 const initialSort=['name','year','score','progress'].includes(savedSort)?savedSort:'name';
 const state={data:{},view:'library',filter:'all',query:'',year:'',type:'',sort:initialSort,subtitle:'',mode:localStorage.getItem('library-view')||'grid',id:null,tab:'chapters',selected:null,token:0,busy:false};
 const apiCache=new Map();
+// Keep fulfilled values alongside promises so a warm detail view renders once.
+const fulfilled=new WeakMap();
+function remember(promise){promise.then(value=>fulfilled.set(promise,value),()=>{});return promise;}
+function cachedValue(cache,key){const pending=cache.get(key);return pending&&fulfilled.get(pending);}
+function consume(promise,render){if(fulfilled.has(promise)){try{render(fulfilled.get(promise));return Promise.resolve();}catch(error){return Promise.reject(error);}}return promise.then(render);}
+const staffPeopleCache=new WeakMap();
+const durationLoads=new WeakMap();
+const durationObserver=new IntersectionObserver(entries=>{
+  for(const {target,isIntersecting}of entries)if(isIntersecting){
+    durationObserver.unobserve(target);const load=durationLoads.get(target);durationLoads.delete(target);if(target.isConnected)load?.();
+  }
+},{root:$('#content'),rootMargin:'120px 0px'});
 const episodeNames=new Map();
 const catalogueCache=new Map();
-function episodeCatalogue(id){const key=String(id);if(!catalogueCache.has(key)){const pending=loadCatalogue(offset=>request('https://api.bgm.tv/v0/episodes?subject_id='+encodeURIComponent(key)+'&limit=100&offset='+offset)).catch(error=>{catalogueCache.delete(key);throw error;});catalogueCache.set(key,pending);}return catalogueCache.get(key);}
+function episodeCatalogue(id){const key=String(id);if(!catalogueCache.has(key)){const pending=remember(loadCatalogue(offset=>request('https://api.bgm.tv/v0/episodes?subject_id='+encodeURIComponent(key)+'&limit=100&offset='+offset)).catch(error=>{catalogueCache.delete(key);throw error;}));catalogueCache.set(key,pending);}return catalogueCache.get(key);}
 let virtualGrid;
-function disposeLibrary(){smoothScroller.cancel();virtualGrid?.destroy();virtualGrid=null;imageObserver.disconnect();}
+function disposeLibrary(){smoothScroller.cancel();virtualGrid?.destroy();virtualGrid=null;imageObserver.disconnect();durationObserver.disconnect();}
 let noticeTimer;
 function node(tag,cls,text){const el=document.createElement(tag);if(cls)el.className=cls;if(text!=null)el.textContent=text;return el;}
 function button(text,action,cls='button small'){const el=node('button',cls,text);el.type='button';el.onclick=action;if(/(?:filter-chip|detail-tab)/.test(cls))el.setAttribute('aria-pressed',String(cls.split(' ').includes('active')));if(text)chromeUI.decorateButton(el,text);return el;}
@@ -59,18 +73,19 @@ function setDetailBackdrop(work){
   if(!poster){poster=node('img','detail-backdrop-poster');poster.alt='';poster.decoding='async';poster.onerror=()=>poster.remove();backdrop.appendChild(poster);}
   if(poster.getAttribute('src')!==url)poster.src=url;
 }
-function image(work,cls){const el=node('img',cls);el.dataset.source=coverURL(work);el.alt='';el.decoding='async';el.onerror=()=>{el.onerror=null;el.src='./assets/no_img.gif';};imageObserver.observe(el);return el;}
-async function request(url){if(apiCache.has(url))return apiCache.get(url);const pending=ipc.invoke('bangumi:request',{url}).then(response=>{if(response.error||response.status!==200)throw Error(response.error||'Bangumi 暂时不可用');return JSON.parse(response.body);});apiCache.set(url,pending);try{return await pending;}catch(error){apiCache.delete(url);throw error;}}
+function image(work,cls,eager=false){const el=node('img',cls);el.dataset.source=coverURL(work);el.alt='';el.decoding=eager?'sync':'async';el.onerror=()=>{el.onerror=null;el.src='./assets/no_img.gif';};if(eager)el.src=el.dataset.source;else imageObserver.observe(el);return el;}
+function request(url){if(apiCache.has(url))return apiCache.get(url);const pending=remember(ipc.invoke('bangumi:request',{url,preferCached:true}).then(response=>{if(response.error||response.status!==200)throw Error(response.error||'Bangumi 暂时不可用');return JSON.parse(response.body);}).catch(error=>{if(apiCache.get(url)===pending)apiCache.delete(url);throw error;}));apiCache.set(url,pending);return pending;}
+ipc.on('bangumi:updated',(_event,{url,body})=>{try{const value=JSON.parse(body);apiCache.set(url,remember(Promise.resolve(value)));const parsed=new URL(url);if(parsed.pathname==='/v0/episodes')catalogueCache.delete(parsed.searchParams.get('subject_id'));}catch{}});
 function adopt(data){for(const [id,work]of Object.entries(data))if(state.data[id]&&JSON.stringify(state.data[id])===JSON.stringify(work))data[id]=state.data[id];state.data=data;const all=works();$('#library-count').textContent=all.length;$('#issue-count').textContent=all.reduce((n,w)=>n+invalid(w).length,0)||'';const chosen=$('#year').value;$('#year').replaceChildren(new Option('全部年份',''));[...new Set(all.map(w=>String(w.Year)).filter(y=>/^\d{4}$/.test(y)&&y!=='0000'))].sort().reverse().forEach(y=>$('#year').add(new Option(y+' 年',y)));$('#year').value=chosen;const selected=$('#media-type').value;$('#media-type').replaceChildren(new Option('全部类型',''));for(const type of ['TV','剧场版','OVA','OAD','WEB','其他'])if(all.some(w=>mediaType(w)===type))$('#media-type').add(new Option(type,type));$('#media-type').value=selected;}
 async function read(){adopt(await ipc.invoke('library:read'));}
-async function edit(work,changes){if(state.busy)return false;state.busy=true;try{const updated=await ipc.invoke('library:edit',{id:work.id,changes});state.data[work.id]=updated;return true;}catch(error){notice('保存失败：'+error.message);return false;}finally{state.busy=false;}}
+async function edit(work,changes){if(state.busy)return false;state.busy=true;try{const updated=await ipc.invoke('library:edit',{id:work.id,changes});state.data[work.id]=updated;return true;}catch(error){notice(changes.DefaultSubtitleGroup&&error.message.includes('不支持的修改')?'默认字幕组尚未保存：后台仍在运行旧版本，请完全退出应用后重新打开，再设置一次。刷新页面不会更新后台。':'保存失败：'+error.message);return false;}finally{state.busy=false;}}
 async function openFile(file){try{const stat=await fs.promises.stat(file);if(stat.isFile()&&!stat.size)throw Error('这是空文件，无法打开');if(stat.isDirectory()){await ipc.invoke('library:explorer',{id:activeWork()?.id,path:file});return;}const error=await shell.openPath(file);if(error)throw Error(error);}catch(error){notice('无法打开：'+error.message);}}
 async function reveal(file){try{await ipc.invoke('library:explorer',{id:activeWork()?.id,path:file,reveal:true});}catch(error){notice(error.message);}}
 function setHeader(title,subtitle,eyebrow='COLLECTION'){$('#page-title').textContent=title;$('#page-title').dataset.tooltip=subtitle;$('#page-subtitle').textContent=subtitle;}
-function activate(view){state.view=view;state.id=null;state.selected=null;state.token++;$('#notice').hidden=true;for(const item of document.querySelectorAll('[data-nav]')){item.classList.toggle('active',item.dataset.nav===view);if(item.dataset.nav===view)item.setAttribute('aria-current','page');else item.removeAttribute('aria-current');}$('#toolbar').hidden=!['library','watching'].includes(view);$('#scan-subtitles').hidden=!['library','watching'].includes(view);$('#filters').hidden=!['library','watching'].includes(view);$('#content').scrollTop=0;render();}
+function activate(view){if(state.view==='organizer'&&view!=='organizer')organizerUI.suspend();state.view=view;state.id=null;state.selected=null;state.token++;$('#notice').hidden=true;for(const item of document.querySelectorAll('[data-nav]')){item.classList.toggle('active',item.dataset.nav===view);if(item.dataset.nav===view)item.setAttribute('aria-current','page');else item.removeAttribute('aria-current');}$('#toolbar').hidden=!['library','watching'].includes(view);$('#scan-subtitles').hidden=!['library','watching'].includes(view);$('#filters').hidden=!['library','watching'].includes(view);$('#content').scrollTop=0;render();}
 const organizerUI=require('./js/organizer-desktop.cjs').create({ipc,node,button,notice,setHeader,container:()=>$('#content'),isActive:()=>state.view==='organizer'});
 const subtitlePanel=require('./js/subtitle-panel.cjs').create({ipc,node,button,notice,refresh:read});
-function render(){if(state.view!=='detail')setDetailBackdrop(null);if(!['library','watching'].includes(state.view))disposeLibrary();document.body.dataset.view=state.view;if(state.view==='organizer')organizerUI.render();else if(state.view==='detail')renderDetail();else if(state.view==='issues')renderIssues();else if(state.view==='settings')renderSettings();else renderLibrary();}
+function render(){if(state.view!=='organizer')organizerUI.suspend();if(state.view!=='detail')setDetailBackdrop(null);if(!['library','watching'].includes(state.view))disposeLibrary();document.body.dataset.view=state.view;if(state.view==='organizer')organizerUI.render();else if(state.view==='detail')renderDetail();else if(state.view==='issues')renderIssues();else if(state.view==='settings')renderSettings();else renderLibrary();}
 function renderLibrary({preserveScroll=false}={}){
   const viewport=$('#content'),scroll=preserveScroll?viewport.scrollTop:0;
   const all=works();const watching=state.view==='watching';setHeader(watching?'正在观看':'媒体库',watching?'把正在追的故事接着看下去。':all.length+' 部本地番剧，章节、特典与观看进度集中管理。');
@@ -82,11 +97,12 @@ function renderLibrary({preserveScroll=false}={}){
   let grid=viewport.querySelector(state.mode==='grid'?'.virtual-poster-grid':'.library-list');
   if(!grid){disposeLibrary();grid=node('div',state.mode==='grid'?'library-grid virtual-poster-grid':'library-list');viewport.replaceChildren(grid);}
   viewport.scrollTop=scroll;
-  if(!list.length){virtualGrid?.destroy();virtualGrid=null;for(const img of grid.querySelectorAll('img'))imageObserver.unobserve(img);grid.style.height='';grid.replaceChildren();empty(grid,'没有找到作品','试试其他关键词或筛选条件。');return;}
-  grid.querySelector('.empty-state')?.remove();
+  if(!list.length){virtualGrid?.setItems([]);for(const img of grid.querySelectorAll('img'))imageObserver.unobserve(img);grid.style.height='';grid.replaceChildren();empty(grid,'没有找到作品','试试其他关键词或筛选条件。');return;}
+  if(state.mode!=='grid'||!virtualGrid)grid.querySelector('.empty-state')?.remove();
   if(state.mode==='grid'){
     if(virtualGrid)virtualGrid.setItems(list);
     else virtualGrid=require('./js/virtual-poster-grid.cjs').mount({root:grid,viewport,items:list,renderItem:posterCard,window,ResizeObserver,
+      onCommit:()=>grid.querySelector('.empty-state')?.remove(),
       releaseItem:row=>{for(const img of row.querySelectorAll('img')){imageObserver.unobserve(img);img.removeAttribute('src');}}
     });
   }else{
@@ -102,8 +118,11 @@ function renderLibrary({preserveScroll=false}={}){
 }
 function posterCard(work){
   const p=progress(work),card=node('article','work-card');
-  const link=button('',()=>openDetail(work.id),'poster-link');link.setAttribute('aria-label','查看 '+work.Name);
-  const poster=node('div','poster');poster.appendChild(image(work));
+  const missingRegular=hasMissingRegular(work);if(missingRegular)card.classList.add('is-missing-regular');
+  const link=button('',()=>openDetail(work.id),'poster-link');link.setAttribute('aria-label','查看 '+work.Name+(missingRegular?'（缺集）':''));
+  // Virtual rows already bound the loaded area; a second lazy-load pass flashes on filtering.
+  const poster=node('div','poster');poster.appendChild(image(work,undefined,true));
+  if(missingRegular){const status=node('span','poster-availability','缺集');status.title='当前没有可用的已登记正片。可能只有特别篇或特典，也可能正片尚未绑定或文件不可用。';poster.appendChild(status);}
   if(Number(work.Score)>0||Number(work.Rank)>0){const rating=node('span','score-badge',Number(work.Score)>0?'★ '+work.Score:'');rating.title='评分 '+work.Score+' · Bangumi 排名 #'+work.Rank;if(Number(work.Rank)>0){const rank=node('span','poster-rank','#'+work.Rank);rank.title='Bangumi 排名 '+work.Rank;rating.appendChild(rank);}poster.appendChild(rating);}
   const bar=node('div','poster-progress'),fill=node('span');fill.style.width=p.percent+'%';bar.appendChild(fill);poster.appendChild(bar);link.appendChild(poster);
   const frame=node('div','poster-frame');frame.appendChild(link);
@@ -138,7 +157,7 @@ function renderDetail({updatePanel=true}={}){
   const work=activeWork();if(!work){activate('library');return;}
   setDetailBackdrop(work);
   const p=progress(work);setHeader('番剧详情','管理本地章节与文件','LIBRARY / DETAILS');const content=$('#content');const scroll=content.scrollTop;content.replaceChildren();
-  const hero=node('section','detail-hero');hero.dataset.workId=state.id;hero.appendChild(image(work,'detail-cover'));const info=node('div','detail-info');info.appendChild(node('h2','',work.Name));const alias=node('div','alias','');alias.id='detail-alias';info.appendChild(alias);const meta=node('div','detail-meta');meta.append(node('span','',work.Type||'动画'),node('span','',airDateLabel(work)),node('span','',p.total+' 个正片章节'),node('span','',resources(work).length+' 个特典文件'));if(Number(work.Score)>0)meta.appendChild(node('span','rating','★ '+work.Score));if(Number(work.Rank)>0)meta.appendChild(node('span','bangumi-rank','Rank #'+work.Rank));info.appendChild(meta);
+  const hero=node('section','detail-hero');hero.dataset.workId=state.id;hero.appendChild(image(work,'detail-cover'));const info=node('div','detail-info');info.appendChild(node('h2','',work.Name));const alias=node('div','alias','');alias.id='detail-alias';info.appendChild(alias);const meta=node('div','detail-meta');meta.append(node('span','',work.Type||'动画'),node('span','',airDateLabel(work)),node('span','',p.total+' 个正片章节'),node('span','',resources(work).length+' 个特典文件'));if(Number(work.Score)>0)meta.appendChild(node('span','rating','★ '+work.Score));if(Number(work.Rank)>0)meta.appendChild(node('span','bangumi-rank','Rank #'+work.Rank));info.appendChild(meta);const staff=node('div','detail-staff');staff.hidden=true;info.appendChild(staff);
   const actions=node('div','detail-actions');actions.append(button('打开文件夹',()=>openFile(work.URL),'button primary small'),workOriginalFolderButton(work),button('Bangumi ↗',()=>shell.openExternal('https://bgm.tv/subject/'+work.bgmID)),button('编辑信息',()=>renderEdit(activeWork())),button('导入字幕',()=>switchDetailTab('subtitles')));info.appendChild(actions);const line=node('div','detail-progress'),bar=document.createElement('progress');bar.max=Math.max(p.total,1);bar.value=p.watched;line.append(bar,node('span','',p.watched+' / '+p.total+' 集已看 · '+p.percent+'%'));info.appendChild(line);hero.appendChild(info);content.appendChild(hero);
   const relations=node('div','relation-strip');relations.hidden=true;content.appendChild(relations);
   const tabs=node('div','detail-tabs');for(const [id,label,count]of [['chapters','章节',p.total],['specials','特别章节','…'],['extras','特典文件',resources(work).length],['invalid','异常文件',invalid(work).length],['subtitles','字幕',work.SubtitleSummary?.covered||0]]){const tab=button(label,()=>switchDetailTab(id),'detail-tab'+(state.tab===id?' active':''));tab.dataset.detailTab=id;tab.appendChild(node('span','',count));tabs.appendChild(tab);}content.appendChild(tabs);
@@ -146,9 +165,26 @@ function renderDetail({updatePanel=true}={}){
   renderDetailPanel(panel,work);
   const notes=node('p','inline-note detail-notes',work.LocalNotes?'备注：'+work.LocalNotes:'');notes.hidden=!work.LocalNotes;content.appendChild(notes);content.scrollTop=scroll;
   const token=state.token;
-  if(work.bgmID){episodeCatalogue(work.bgmID).then(rows=>{if(token!==state.token||!tabs.isConnected)return;const count=specialChapters(work,rows).reduce((n,g)=>n+g.rows.length,0);tabs.querySelector('[data-detail-tab="specials"] span').textContent=count;}).catch(()=>{if(tabs.isConnected)tabs.querySelector('[data-detail-tab="specials"] span').textContent='?';});request('https://api.bgm.tv/v0/subjects/'+work.bgmID).then(data=>{if(token!==state.token||!alias.isConnected)return;alias.textContent=data.name===work.Name?'':data.name||'';}).catch(()=>{});
-    request('https://api.bgm.tv/v0/subjects/'+work.bgmID+'/subjects').then(rows=>{if(token!==state.token||!relations.isConnected||!Array.isArray(rows))return;for(const relation of rows){if(relation.type!==2)continue;const local=works().find(w=>String(w.bgmID)===String(relation.id));const item=button((relation.relation||'关联')+' · '+(relation.name_cn||relation.name),()=>local?openDetail(local.id):shell.openExternal('https://bgm.tv/subject/'+relation.id),'relation'+(local?' local':''));if(local)item.appendChild(node('span','local-tag','本地'));relations.appendChild(item);}relations.hidden=!relations.childElementCount;}).catch(()=>{});
+  if(work.bgmID){consume(episodeCatalogue(work.bgmID),rows=>{if(token!==state.token||!tabs.isConnected)return;const count=specialChapters(work,rows).reduce((n,g)=>n+g.rows.length,0);tabs.querySelector('[data-detail-tab="specials"] span').textContent=count;}).catch(()=>{if(tabs.isConnected)tabs.querySelector('[data-detail-tab="specials"] span').textContent='?';});consume(request('https://api.bgm.tv/v0/subjects/'+work.bgmID),data=>{if(token!==state.token||!alias.isConnected)return;alias.textContent=data.name===work.Name?'':data.name||'';loadSubjectStaff(staff,data);}).catch(()=>{});
+    consume(request('https://api.bgm.tv/v0/subjects/'+work.bgmID+'/subjects'),rows=>{if(token!==state.token||!relations.isConnected||!Array.isArray(rows))return;const localWorks=new Map(works().map(w=>[String(w.bgmID),w]));for(const relation of rows){if(relation.type!==2)continue;const local=localWorks.get(String(relation.id));const item=button((relation.relation||'关联')+' · '+(relation.name_cn||relation.name),()=>local?openDetail(local.id):shell.openExternal('https://bgm.tv/subject/'+relation.id),'relation'+(local?' local':''));if(local)item.appendChild(node('span','local-tag','本地'));relations.appendChild(item);}relations.hidden=!relations.childElementCount;}).catch(()=>{});
   }
+}
+function renderSubjectStaff(host,subject,persons=[]){
+  if(!host)return;const staff=subjectStaff(subject,persons),signature=JSON.stringify(staff);if(host.dataset.staffContent===signature)return;host.dataset.staffContent=signature;host.replaceChildren();host.hidden=!staff.length;
+  for(const {label,parts}of staff){const item=node('span','detail-staff-item');item.appendChild(node('span','detail-staff-label',label+'：'));
+    for(const part of parts){if(!part.id){item.appendChild(node('span','',part.text));continue;}
+      const link=node('a','detail-staff-link',part.text);link.href='https://bgm.tv/person/'+part.id;link.title='在 Bangumi 查看 '+part.text;
+      link.onclick=event=>{event.preventDefault();shell.openExternal(link.href);};item.appendChild(link);
+    }host.appendChild(item);
+  }
+}
+function loadSubjectStaff(host,subject){
+  renderSubjectStaff(host,subject,cachedValue(apiCache,'https://api.bgm.tv/v0/subjects/'+subject?.id+'/persons')||staffPeopleCache.get(subject)||[]);if(!host)return;host.dataset.staffSubject=String(subject?.id||'');if(!/^[1-9]\d*$/.test(String(subject?.id)))return;
+  const id=String(subject.id);host.dataset.staffSubject=id;
+  consume(request('https://api.bgm.tv/v0/subjects/'+encodeURIComponent(id)+'/persons'),persons=>{
+    staffPeopleCache.set(subject,persons);
+    if(host.isConnected&&host.dataset.staffSubject===id)renderSubjectStaff(host,subject,persons);
+  }).catch(()=>{});
 }
 function renderDetailPanel(panel,work){
   if(state.tab==='specials')renderSpecialChapters(panel,work);else if(state.tab==='subtitles')subtitlePanel.mount(work,panel);else if(state.tab==='chapters')renderChapters(panel,work);else if(state.tab==='extras')renderResources(panel,work);else renderInvalid(panel,work);
@@ -162,50 +198,52 @@ function updateDetailHeader(){
   for(const [cls,text]of [['rating',Number(work.Score)>0?'★ '+work.Score:''],['bangumi-rank',Number(work.Rank)>0?'Rank #'+work.Rank:'']]){let el=meta.querySelector('.'+cls);if(!el&&text){el=node('span',cls);meta.appendChild(el);}if(el){el.textContent=text;el.hidden=!text;}}
   const cover=hero.querySelector('.detail-cover'),url=coverURL(work);if(cover.dataset.source!==url){cover.dataset.source=url;cover.src=url;}setDetailBackdrop(work);
   for(const [id,count]of [['chapters',p.total],['extras',resources(work).length],['invalid',invalid(work).length],['subtitles',work.SubtitleSummary?.covered||0]])$('[data-detail-tab="'+id+'"] span').textContent=count;
-  if(work.bgmID){const id=state.id,token=state.token;episodeCatalogue(work.bgmID).then(rows=>{if(state.id!==id||token!==state.token||!hero.isConnected)return;meta.children[2].textContent='本地 '+regularChapters(work,rows).rows.filter(row=>row.state==='mapped').length+' / '+regularChapters(work,rows).rows.length+' 个正片章节';$('[data-detail-tab="specials"] span').textContent=specialChapters(work,rows).reduce((n,g)=>n+g.rows.length,0);}).catch(()=>{});request('https://api.bgm.tv/v0/subjects/'+work.bgmID).then(info=>{if(state.id===id&&token===state.token&&hero.isConnected)hero.querySelector('.alias').textContent=info.name===work.Name?'':info.name||'';}).catch(()=>{});}
+  if(work.bgmID){const id=state.id,token=state.token;consume(episodeCatalogue(work.bgmID),rows=>{if(state.id!==id||token!==state.token||!hero.isConnected)return;meta.children[2].textContent='本地 '+regularChapters(work,rows).rows.filter(row=>row.state==='mapped').length+' / '+regularChapters(work,rows).rows.length+' 个正片章节';$('[data-detail-tab="specials"] span').textContent=specialChapters(work,rows).reduce((n,g)=>n+g.rows.length,0);}).catch(()=>{});consume(request('https://api.bgm.tv/v0/subjects/'+work.bgmID),info=>{if(state.id===id&&token===state.token&&hero.isConnected){hero.querySelector('.alias').textContent=info.name===work.Name?'':info.name||'';loadSubjectStaff(hero.querySelector('.detail-staff'),info);}}).catch(()=>{});}
   const notes=$('.detail-notes');if(notes){notes.textContent=work.LocalNotes?'备注：'+work.LocalNotes:'';notes.hidden=!work.LocalNotes;}
 }
 function switchDetailTab(id,{resetSelection=true}={}){
   const work=activeWork(),previous=$('.detail-panel');
   if(!work||!previous)return;
   const content=$('#content'),scroll=content.scrollTop;
-  state.tab=id;if(resetSelection){state.selected=null;state.specialEpisodeId=null;}
+  state.tab=id;
   for(const tab of document.querySelectorAll('[data-detail-tab]')){
     const active=tab.dataset.detailTab===id;
     tab.classList.toggle('active',active);tab.setAttribute('aria-pressed',String(active));
   }
   for(const img of previous.querySelectorAll('img'))imageObserver.unobserve(img);
+  for(const line of previous.querySelectorAll('.chapter-duration'))durationObserver.unobserve(line);
   // Detach the old host so pending requests cannot update the newly selected tab.
   const replace=()=>{const panel=node('div','detail-panel');previous.replaceWith(panel);renderDetailPanel(panel,work);};
   if(resetSelection)replace();else require('./js/ui-regions.cjs').preserveInteraction(content,replace);
   content.scrollTop=scroll;
 }
 function renderChapters(panel,work){
+  if(!state.selected||(!String(state.selected).startsWith('catalog:')&&!work.EPDetails?.[state.selected]))state.selected=defaultChapter(work);
   const heading=node('div','section-heading'),mark=button('全部标为看过',async()=>{const changes=Object.fromEntries(slots(work).map(([key])=>['EPDetails.'+key+'.Condition','Watched']));if(await edit(work,changes))renderDetail();},'button quiet small');
   mark.disabled=!slots(work).length;mark.title='将已登记的本地正片标为看过';heading.append(node('h3','','正片章节'),mark);panel.appendChild(heading);
   const note=node('p','inline-note',work.bgmID?'正在核对 Bangumi 正片目录…':'尚未绑定 Bangumi 条目，无法核对缺集。');panel.appendChild(note);
+  const detail=node('div','chapter-detail-slot');panel.appendChild(detail);
+  detail.appendChild(episodeFilePanel({heading:'章节详情',title:'',actions:node('div'),files:[],emptyMessage:'暂无可用的本地正片，选择章节可查看详情。',work}));
   const grid=node('div','chapter-grid');panel.appendChild(grid);
   function localCard(key,slot,title,episode,resolveDuration=false){
     const watched=slot.Condition==='Watched';
     const tile=chapterCard({label:slot.Collection?'合集':'EP '+(slot.EpisodeNumber||slot.LocalIndex),title:title||episodeNames.get(String(slot.EpisodeID))||(slot.Versions?.length||1)+' 个本地文件 · '+(watched?'已看':'未看'),
       status:watched?'✓':'',watched,selected:state.selected===key,
       durationEpisode:episode,durationFile:resolveDuration||!work.bgmID?episodePath(work,slot):null,work,
-      onSelect:()=>{state.selected=key;for(const selected of panel.querySelectorAll('.chapter.selected'))selected.classList.remove('selected');tile.classList.add('selected');renderSelection(panel,work,key);panel.querySelector('.file-panel')?.scrollIntoView({block:'nearest'});},
-      actions:chapterActions(work,key,'chapter-actions')});return tile;
+      onSelect:()=>{selectChapter(panel,key);renderSelection(panel,work,key);},
+      actions:chapterActions(work,key,'chapter-actions')});tile.dataset.chapterKey=key;return tile;
   }
-  for(const [key,slot]of slots(work).filter(([,s])=>!s.Collection))grid.appendChild(localCard(key,slot));
+  const warmCatalogue=cachedValue(catalogueCache,String(work.bgmID));
+  if(!warmCatalogue)for(const [key,slot]of slots(work).filter(([,s])=>!s.Collection))grid.appendChild(localCard(key,slot));
   renderCollections(panel,work);
   const initialEmpty=!slots(work).length?node('p','inline-note',work.BDMV==='BDMV'?'此作品为原盘，请通过“打开文件夹”管理。':'暂无本地正片章节。'):null;
   if(initialEmpty)panel.appendChild(initialEmpty);
-  if(state.selected&&!work.EPDetails[state.selected]?.Collection)renderSelection(panel,work,state.selected);
+  if(state.selected&&work.EPDetails?.[state.selected])renderSelection(panel,work,state.selected);
   const token=state.token;
-  if(work.bgmID)episodeCatalogue(work.bgmID).then(episodes=>{
+  if(work.bgmID)consume(episodeCatalogue(work.bgmID),episodes=>{
     if(token!==state.token||!grid.isConnected)return;
-    const report=regularChapters(work,episodes),scroll=$('#content').scrollTop;grid.replaceChildren();initialEmpty?.remove();
-    const missing=report.missing.map(row=>'EP '+(row.sort??row.ep)).join('、');
-    note.classList.toggle('chapter-missing-note',Boolean(report.missing.length||report.unavailable.length));
-    note.textContent='Bangumi 共 '+report.rows.length+' 集正片 · '+report.missing.length+' 集未映射 · '+report.unavailable.length+' 集文件不可用'+(report.upcoming.length?' · '+report.upcoming.length+' 集未播出':'')+(missing?'。需核对：'+missing:'')+'。未映射可能是缺集或已有文件尚未绑定；未播出章节不计入缺集提醒。';
-    if(work.BDMV==='BDMV')note.textContent+=' 此作品为原盘，未建立逐集映射不代表原盘缺少内容。';
+    const report=regularChapters(work,episodes),scroll=$('#content').scrollTop;for(const line of grid.querySelectorAll('.chapter-duration'))durationObserver.unobserve(line);grid.replaceChildren();initialEmpty?.remove();
+    note.hidden=true;
     const tab=document.querySelector('[data-detail-tab="chapters"] span');if(tab)tab.textContent=report.rows.length;
     const meta=document.querySelector('.detail-meta');if(meta?.children[2])meta.children[2].textContent='本地 '+report.rows.filter(row=>row.state==='mapped').length+' / '+report.rows.length+' 个正片章节';
     for(const episode of report.rows){
@@ -216,11 +254,13 @@ function renderChapters(panel,work){
       const actions=episodeActions({file:episode.usable[0]?.path,link:'https://bgm.tv/ep/'+episode.id,watched:false,onToggle:()=>{},onThrough:()=>{},throughTitle:'绑定本地正片后可更新观看进度'},'chapter-actions');
       actions.children[2].disabled=true;actions.children[3].disabled=true;
       const tile=chapterCard({label:'EP '+(episode.sort??episode.ep),title,status,warning:episode.state==='unmapped'||episode.state==='unavailable',
-        durationEpisode:episode,durationFile:episode.usable[0]?.path,work,selected:state.selected==='catalog:'+episode.id,onSelect:()=>{state.selected='catalog:'+episode.id;panel.querySelector('.file-panel')?.remove();const box=episodeFilePanel({heading:'EP '+(episode.sort??episode.ep)+' · 本地文件',title,episodeId:episode.id,actions:node('div'),files:episode.files.map(file=>({path:file.path,description:file.availability&&file.availability!=='available'?'已映射，文件状态：'+file.availability:'已映射本地文件'})),emptyMessage:episode.state==='upcoming'?'此章节尚未播出。':'未映射本地文件；请检查是否缺集，或在资源整理中核对章节绑定。',work});panel.insertBefore(box,grid);box.scrollIntoView({block:'nearest'});},actions});
+        durationEpisode:episode,durationFile:episode.usable[0]?.path,work,selected:state.selected==='catalog:'+episode.id,onSelect:()=>{selectChapter(panel,'catalog:'+episode.id);const box=episodeFilePanel({heading:'EP '+(episode.sort??episode.ep)+' · 本地文件',title,episodeId:episode.id,actions:node('div'),files:episode.files.map(file=>({path:file.path,description:file.availability&&file.availability!=='available'?'已映射，文件状态：'+file.availability:'已映射本地文件'})),emptyMessage:episode.state==='upcoming'?'此章节尚未播出。':'未映射本地文件；请检查是否缺集，或在资源整理中核对章节绑定。',work});updateChapterDetail(panel,box);},actions});
+      tile.dataset.chapterKey='catalog:'+episode.id;
+      if(state.selected===tile.dataset.chapterKey)tile.querySelector('.chapter-main').click();
       tile.title=title+'\n'+status+(episode.airdate?'\n'+episode.airdate:'');grid.appendChild(tile);
     }
     if(report.unmatchedSlots.length){panel.appendChild(node('p','inline-note','以下 '+report.unmatchedSlots.length+' 个本地章节未匹配目录，保留原有操作；请核对章节绑定。'));const extra=node('div','chapter-grid');for(const [key,slot]of report.unmatchedSlots)extra.appendChild(localCard(key,slot,'',null,true));panel.appendChild(extra);}
-    if(!report.rows.length)note.textContent='Bangumi 暂无正片章节目录，无法据此确认是否缺集。本地未绑定章节保留在下方。';
+    if(!report.rows.length){note.hidden=false;note.textContent='Bangumi 暂无正片章节目录。';}
     $('#content').scrollTop=scroll;
   }).catch(error=>{if(token!==state.token||!grid.isConnected)return;note.textContent='正片目录加载失败，暂时无法核对缺集：'+error.message;grid.replaceChildren(...slots(work).filter(([,s])=>!s.Collection).map(([key,slot])=>localCard(key,slot,'',null,true)));panel.appendChild(button('重试核对',()=>{panel.replaceChildren();renderChapters(panel,work);},'button quiet'));});
 }
@@ -232,8 +272,7 @@ function renderCollections(panel,work){
   const grid=node('div','chapter-grid');
   for(const [key,slot]of entries){const title=collectionTitle(work,slot),watched=slot.Condition==='Watched';
     const tile=chapterCard({label:'合集',title,watched,status:watched?'✓':'',selected:state.selected===key,work,durationFile:episodePath(work,slot),
-      actions:chapterActions(work,key,'chapter-actions'),onSelect:()=>{state.selected=key;renderDetail();}});tile.title=title;grid.appendChild(tile);
-    if(state.selected===key)section.appendChild(episodeFilePanel({heading:'合集 · 本地文件',title,actions:chapterActions(work,key,'file-panel-actions'),files:slot.Versions||[{path:episodePath(work,slot)}],work}));
+      actions:chapterActions(work,key,'chapter-actions'),onSelect:()=>{selectChapter(panel,key);renderSelection(panel,work,key);}});tile.dataset.chapterKey=key;tile.title=title;grid.appendChild(tile);
   }
   section.appendChild(grid);panel.appendChild(section);
 }
@@ -255,12 +294,11 @@ function renderSpecialChapters(panel,work){
   const token=state.token;
   if(!work.bgmID){empty(panel,'尚未绑定 Bangumi 条目','绑定条目后才能获取特别章节目录。');return;}
   panel.appendChild(node('p','inline-note','正在读取 Bangumi 完整章节目录…'));
-  episodeCatalogue(work.bgmID).then(rows=>{
+  consume(episodeCatalogue(work.bgmID),rows=>{
     if(token!==state.token||!panel.isConnected)return;
     const groups=specialChapters(work,rows);
     function draw(){
       if(!panel.isConnected)return;const scroll=$('#content').scrollTop;panel.replaceChildren();
-      panel.appendChild(node('p','inline-note','按 Bangumi 的章节类型独立展示，仅按明确章节 ID 匹配本地文件。未映射不代表没有下载，也可能是已有特典尚未绑定。'));
       if(!groups.length){empty(panel,'此条目没有特别章节','本地特典仍可在“特典文件”中查看。');return;}
       for(const group of groups){
         const section=node('section','special-catalog-section'),heading=node('div','section-heading');heading.append(node('h3','',group.title),node('span','',group.rows.length+' 个章节'));section.appendChild(heading);
@@ -268,8 +306,8 @@ function renderSpecialChapters(panel,work){
         for(const episode of group.rows){
           const selected=String(state.specialEpisodeId)===String(episode.id),watched=specialWatched(work,episode.id);
           const title=episode.name_cn||episode.name||'未命名章节';
-          const tile=chapterCard({label:group.code+' '+(episode.sort??episode.ep??''),title,watched,selected,durationEpisode:episode,durationFile:episode.usable[0]?.path,work,
-            status:episode.state==='unmapped'?'未映射':episode.state==='unavailable'?'不可用':watched?'✓':episode.files.length+' 文件',
+          const tile=chapterCard({label:group.code+' '+(episode.sort??episode.ep??''),title,watched,selected,durationEpisode:episode,durationFile:preferredVersion(work,episode.usable)||episode.usable[0]?.path,work,
+            status:episode.state==='unmapped'?'未映射':episode.state==='unavailable'?'不可用':watched?'✓':'',
             warning:episode.state!=='mapped',onSelect:()=>{state.specialEpisodeId=selected?null:episode.id;draw();},
             actions:specialActions(work,group,episode,'chapter-actions')});
           tile.title=title+'\n'+(episode.state==='unmapped'?'未映射本地文件':episode.state==='unavailable'?'已映射，文件不可用':'已映射 '+episode.files.length+' 个文件')+(episode.airdate?'\n'+episode.airdate:'');grid.appendChild(tile);
@@ -287,14 +325,15 @@ function renderSpecialChapters(panel,work){
   }).catch(error=>{if(token!==state.token||!panel.isConnected)return;panel.replaceChildren();empty(panel,'特别章节目录加载失败',error.message);panel.appendChild(button('重试',()=>renderSpecialChapters(panel,work),'button quiet'));});
 }
 function chapterCard({label,title,status='',watched=false,selected=false,warning=false,onSelect,actions,durationEpisode,durationFile,work}){
-  const tile=node('article','chapter'+(watched?' watched':'')+(selected?' selected':'')+(warning?' mapping-warning':''));
-  const main=button('',onSelect,'chapter-main');main.setAttribute('aria-label',label+' 章节文件');
-  const top=node('div','chapter-top');top.append(node('span','',label),node('span','chapter-state',status));main.append(top,node('div','chapter-name',title));tile.append(main,actions);
+  const tile=node('article','chapter'+(watched?' watched':'')+(selected?' selected':'')+(warning?' mapping-warning':'')+(status==='未映射'?' chapter-unmapped':''));
+  const main=button('',onSelect,'chapter-main');main.setAttribute('aria-label',label+' 章节文件'+(status==='未映射'?'，未映射本地文件':''));
+  tile.onclick=event=>{if(!event.target.closest('button,a,input,select,textarea'))main.click();};
+  const top=node('div','chapter-top'),badge=node('span','chapter-state',status);if(status==='未映射'){badge.replaceChildren(chromeUI.icon(document,'close'));badge.title='未映射本地文件';}top.append(node('span','',label),badge);main.append(top,node('div','chapter-name',title));tile.append(main,actions);
   const duration=bangumiDuration(durationEpisode);
   if(duration||durationFile){
     tile.classList.add('with-duration');const line=node('small','chapter-duration',duration?'BGM '+formatDuration(duration):'时长读取中…');main.appendChild(line);
     line.title=duration?'Bangumi 标注时长，可能与本地版本不同':'当前播放版本的视频时长';
-    if(!duration&&durationFile&&work)ipc.invoke('media:duration',{id:work.id,path:durationFile}).then(seconds=>{if(line.isConnected)line.textContent=seconds?'本地 '+formatDuration(seconds):'时长未知';}).catch(()=>{if(line.isConnected)line.textContent='时长未知';});
+    if(!duration&&durationFile&&work){durationLoads.set(line,()=>ipc.invoke('media:duration',{id:work.id,path:durationFile}).then(seconds=>{if(line.isConnected)line.textContent=seconds?'本地 '+formatDuration(seconds):'时长未知';}).catch(()=>{if(line.isConnected)line.textContent='时长未知';}));durationObserver.observe(line);}
   }
   return tile;
 }
@@ -309,20 +348,52 @@ function chapterActions(work,key,cls){
     onToggle:async()=>{if(await edit(work,{['EPDetails.'+key+'.Condition']:activeWork()?.EPDetails?.[key]?.Condition==='Watched'?'Unwatched':'Watched'}))renderDetail();},
     onThrough:async()=>{if(await edit(work,watchedThrough(activeWork(),key)))renderDetail();},throughTitle:'将本集及之前的正片全部标为看过，后面的集数保持原样'},cls);
 }
-function specialActions(work,group,episode,cls){return episodeActions({file:episode.usable[0]?.path,link:'https://bgm.tv/ep/'+episode.id,watched:specialWatched(work,episode.id),
+function specialActions(work,group,episode,cls){return episodeActions({file:preferredVersion(work,episode.usable)||episode.usable[0]?.path,link:'https://bgm.tv/ep/'+episode.id,watched:specialWatched(work,episode.id),
   onToggle:async()=>{if(await edit(work,specialToggle(activeWork(),episode.id)))renderDetail();},
   onThrough:async()=>{if(await edit(work,specialThrough(group,episode.id)))renderDetail();},throughTitle:'将本章节及之前的'+group.title+'标为看过，保留其他类型与正片进度'},cls);}
-function episodeFilePanel({heading,title,episodeId,actions,files,emptyMessage,work}){
+function episodeFilePanel({heading,title,episodeId,episodeNumber,actions,files,emptyMessage,work}){
   const box=node('section','file-panel'),header=node('div','file-panel-header');header.append(node('h3','',heading),actions);box.appendChild(header);
   const name=node('p','selected-chapter-title',title);name.dataset.episodeId=String(episodeId||'');box.appendChild(name);
+  if(work?.bgmID&&(episodeId||episodeNumber!=null))mountEpisodeDescription(box,{work,episodeId,episodeNumber});
   if(!files.length&&emptyMessage)box.appendChild(node('p','inline-note',emptyMessage));
-  for(const file of files)if(file.path)box.appendChild(fileRow(file.path,file.description,work));return box;
+  const versions=files.filter(file=>file.path);
+  for(const file of versions.slice(0,2))box.appendChild(fileRow(file.path,file.description,work));
+  if(versions.length>2){
+    const more=node('details','chapter-more-files'),summary=node('summary','','显示其余 '+(versions.length-2)+' 个版本');more.appendChild(summary);
+    for(const file of versions.slice(2))more.appendChild(fileRow(file.path,file.description,work));
+    more.ontoggle=()=>{summary.textContent=more.open?'收起其他版本':'显示其余 '+(versions.length-2)+' 个版本';};box.appendChild(more);
+  }
+  return box;
+}
+function mountEpisodeDescription(box,{work,episodeId,episodeNumber}){
+  const section=node('div','chapter-description');section.hidden=true;box.appendChild(section);
+  const warm=Boolean(cachedValue(catalogueCache,String(work.bgmID)));
+  consume(episodeCatalogue(work.bgmID),episodes=>{
+    if(!warm&&!box.isConnected)return;
+    const matches=episodes.filter(ep=>episodeId?String(ep.id)===String(episodeId):Number(ep.type)===0&&Number(ep.sort)===Number(episodeNumber));
+    const episode=matches.length===1?matches[0]:null,description=typeof episode?.desc==='string'?episode.desc.trim():'';
+    if(!description)return;
+    const text=node('p','chapter-description-text',description);text.id='chapter-desc-'+episode.id;
+    let expanded=false;
+    const toggle=button('展开',()=>{expanded=!expanded;text.classList.toggle('expanded',expanded);toggle.textContent=expanded?'收起':'展开';toggle.setAttribute('aria-expanded',String(expanded));},'button quiet small chapter-description-toggle');
+    toggle.setAttribute('aria-expanded','false');toggle.setAttribute('aria-controls',text.id);toggle.hidden=true;
+    section.append(text,toggle);section.hidden=false;
+    const measure=()=>{const lineHeight=parseFloat(getComputedStyle(text).lineHeight);toggle.hidden=text.scrollHeight<=lineHeight*2+1;};
+    const observer=new ResizeObserver(()=>{if(!box.isConnected){observer.disconnect();return;}measure();});observer.observe(text);if(box.isConnected)measure();
+  }).catch(()=>{});
+}
+function selectChapter(panel,key){
+  state.selected=key;for(const tile of panel.querySelectorAll('[data-chapter-key]'))tile.classList.toggle('selected',tile.dataset.chapterKey===key);
+}
+function updateChapterDetail(panel,box){
+  const host=panel.querySelector('.chapter-detail-slot');if(!host)return;
+  const scroll=$('#content').scrollTop;host.replaceChildren(box);$('#content').scrollTop=scroll;
 }
 function renderSelection(panel,work,key){
-  panel.querySelector('.file-panel')?.remove();const slot=work.EPDetails[key];if(!slot)return;
-  const box=episodeFilePanel({heading:(slot.Collection?'合集':'EP '+(slot.EpisodeNumber||slot.LocalIndex))+' · 本地文件',title:slot.Collection?collectionTitle(work,slot):episodeNames.get(String(slot.EpisodeID))||'',episodeId:slot.EpisodeID,
+  const slot=work.EPDetails[key];if(!slot)return;
+  const box=episodeFilePanel({heading:(slot.Collection?'合集':'EP '+(slot.EpisodeNumber||slot.LocalIndex))+' · 本地文件',title:slot.Collection?collectionTitle(work,slot):episodeNames.get(String(slot.EpisodeID))||'',episodeId:slot.EpisodeID,episodeNumber:slot.Collection?undefined:slot.EpisodeNumber,
     actions:chapterActions(work,key,'file-panel-actions'),files:slot.Versions||[{path:episodePath(work,slot)}],work});
-  panel.insertBefore(box,panel.querySelector('.chapter-grid'));
+  updateChapterDetail(panel,box);
 }
 async function clearRecords(selection){
   if(state.busy)return;state.busy=true;
@@ -354,6 +425,13 @@ function originalFolderButton(work,file){
 function fileRow(file,description,work=activeWork()){
   const row=node('div','file-row'),label=node('div','file-name',path.basename(file));label.title=file;if(description)label.appendChild(node('small','',description));
   const actions=node('div','file-actions'),remove=button('删除文件',()=>trashFile(work,file),'button danger small');
+  const group=subtitleGroup(work,file),isDefault=Boolean(group)&&group.toLowerCase()===String(work.DefaultSubtitleGroup||'').toLowerCase();
+  const defaultGroup=button(isDefault?'默认字幕组':'设为默认字幕组',async()=>{
+    if(await edit(work,{DefaultSubtitleGroup:group})){renderDetail();notice('默认字幕组已设为 '+group+'；缺少该组的章节使用原有版本');}
+  },'button quiet small');
+  defaultGroup.disabled=!group||isDefault;defaultGroup.setAttribute('aria-pressed',String(isDefault));
+  defaultGroup.title=group?(isDefault?'默认字幕组：':'设为默认字幕组：')+group:'未识别到字幕组，无法设为默认';
+  actions.appendChild(defaultGroup);
   remove.disabled=!work?.RenameBinding?.files?.some(row=>path.resolve(row.path).toLowerCase()===path.resolve(file).toLowerCase());remove.title='确认后移入系统回收站';
   if(work?.bgmID&&!remove.disabled)actions.appendChild(button((slots(work).some(([,s])=>s.Collection&&(s.Versions||[]).some(v=>path.resolve(v.path).toLowerCase()===path.resolve(file).toLowerCase()))?'合集设置 / 重命名':'设为合集'),()=>chooseCollection(work,file),'button quiet small'));
   actions.append(button('打开',()=>openFile(file)),button('定位',()=>reveal(file),'button quiet small'),originalFolderButton(work,file),remove);row.append(label,actions);return row;
@@ -424,6 +502,6 @@ let libraryUpdate;
 ipc.on('library:updated',()=>{clearTimeout(libraryUpdate);libraryUpdate=setTimeout(async()=>{try{await read();if(state.view==='detail')renderDetail({updatePanel:false});else if(['library','watching'].includes(state.view))renderLibrary({preserveScroll:true});else if(state.view==='issues')renderIssues();}catch(error){notice('更新媒体库失败：'+error.message);}},100);});
 ipc.on('MainWindow',(_event,action)=>{const view={OpenMediaPage:'library',OpenMainPage:'library',OpenWatchingPage:'watching',OpenOrganizerPage:'organizer',OpenSettingsPage:'settings'}[action];if(view)activate(view);});
 ipc.invoke('subtitles:progress').then(progress=>{if(progress.running)showSubtitleProgress(progress);}).catch(()=>{});
-read().then(render).catch(error=>{empty($('#content'),'无法读取媒体库',error.message);});
+read().then(()=>{render();window.requestIdleCallback(()=>organizerUI.preload(),{timeout:1500});}).catch(error=>{empty($('#content'),'无法读取媒体库',error.message);});
 require('./js/desktop-performance.cjs').install({document,window});
 chromeUI.install({document,window});

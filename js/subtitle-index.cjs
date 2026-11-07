@@ -88,7 +88,20 @@ class SubtitleIndex{
   async scan(work,force=false){await this.scanFiles(filesOf(work),{force});return this.details(work);}
   details(work){return {summary:summary(work,this.index),files:filesOf(work).map(file=>({path:file,...this.index.get(normalized(file)),label:describe(this.index.get(normalized(file)))})),progress:this.progress};}
   decorate(data){for(const work of Object.values(data))if(work?.WorkSaveNo)work.SubtitleSummary=summary(work,this.index);return data;}
-  async mark(file,value){if(!['burned','none',''].includes(value))throw Error('字幕确认类型无效');await this.inspect(file);const row=this.index.get(normalized(file));if(!row?.signature||row.state==='unavailable')throw Error('文件不可用，不能确认');if(value==='none'&&(row.external?.length||row.internal?.length))throw Error('已检测到字幕轨或外挂文件，不能标记无字幕；请核对字幕语言。');row.manual=value||undefined;await this.save();return row;}
+  async mark(file,value){return (await this.markMany([file],value))[0];}
+  async markMany(files,value){
+    if(!['burned','none',''].includes(value))throw Error('字幕确认类型无效');
+    if(!files.length)throw Error('没有可确认的视频');
+    const rows=[],context=createScanContext();
+    for(const file of [...new Set(files)]){
+      await this.inspect(file,false,context);const row=this.index.get(normalized(file));
+      if(!row?.signature||row.state==='unavailable')throw Error(path.basename(file)+'：文件不可用，未应用本次确认');
+      if(value==='none'&&(row.external?.length||row.internal?.length))throw Error(path.basename(file)+'：已检测到字幕轨或外挂，不能标记无字幕；未应用本次确认');
+      rows.push(row);
+    }
+    for(const row of rows)row.manual=value||undefined;
+    await this.save();return rows;
+  }
   startAll(data){if(this.progress.running)return this.progress;const works=Object.values(data).filter(w=>w?.ExistCondition==='Exist');const files=[...new Set(works.flatMap(filesOf))];this.progress={running:true,done:0,total:files.length};
     (async()=>{try{let next=0,lastNotice=0,lastSave=Date.now();const context=createScanContext();const worker=async()=>{while(next<files.length){const file=files[next++];await this.inspect(file,false,context);this.progress.done++;const now=Date.now();if(now-lastNotice>=200){lastNotice=now;this.onProgress({...this.progress});}if(now-lastSave>=5000){lastSave=now;await this.save();}}};await Promise.all([worker(),worker()]);await this.save();}catch(error){this.progress.error=error.message;}finally{this.progress.running=false;this.onProgress({...this.progress});}})();return this.progress;}
 }

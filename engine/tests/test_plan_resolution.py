@@ -189,6 +189,53 @@ class ResolutionTests(unittest.TestCase):
         self.assertEqual(checked['issues'], [])
         return plans.execute_saved_plan('task', self.plan['revision'], rows, checked['token'])
 
+    def test_edit_group_retargets_video_and_subtitles_preserving_drafts(self):
+        rows = self.rows()
+        rows[0]['version'] = '1080p'
+        rows[1]['episode'] = 2
+        before = self.check(rows)
+        checked = plans.check_saved_plan('task', self.plan['revision'], rows, subtitle_group='7³ACG')
+        self.assertEqual(checked['issues'], [])
+        self.assertIn('[7³ACG] [1080p]', checked['mapping'][self.a].name)
+        self.assertIn('S01E02 [7³ACG]', checked['mapping'][self.b].name)
+        self.assertEqual(checked['mapping'][self.a.with_suffix('.chs.ass')].name,
+                         checked['mapping'][self.a].stem + '.chs.ass')
+        self.assertEqual(plans.load_plan('task')['draft_rows'], rows)
+        self.assertFalse(checked['mapping'][self.a].exists())
+        with self.assertRaisesRegex(ValueError, '调整已改变'):
+            plans.execute_saved_plan('task', self.plan['revision'], rows, before['token'])
+        self.assertIsNone(plans.execute_saved_plan('task', self.plan['revision'], rows, checked['token']))
+        self.assertEqual(json.loads((self.tasks / 'task.json').read_text(encoding='utf-8'))['subtitle_group'], '7³ACG')
+
+    def test_bangumi_group_edit_preserves_existing_version_and_new_episode(self):
+        plan = copy.deepcopy(self.plan)
+        plan['context'].update(layout='bangumi', subject_id='1', subtitle_group='7³ACG',
+                               original_subtitle_group='Old', episodes=[
+                                   {'id': 11, 'sort': 1, 'type': 0}, {'id': 12, 'sort': 2, 'type': 0}])
+        for row in plan['rows']:
+            row.update(category='episode', subject_id='1', episode_id=11,
+                       original_target=str(self.work / 'Example EP01 [Old] [1080p].mkv'))
+        rows = copy.deepcopy(plan['rows'])
+        rows[1]['episode_id'] = 12
+        mapping, _ = plans.build_adjusted_mapping(plan, rows)
+        self.assertEqual(mapping[Path(rows[0]['source'])].name, 'Example EP01 [7³ACG] [1080p].mkv')
+        self.assertIn('[7³ACG]', mapping[Path(rows[1]['source'])].name)
+        self.assertNotIn('[Old]', mapping[Path(rows[1]['source'])].name)
+        rows[0]['filename'] = 'Custom title'
+        mapping, _ = plans.build_adjusted_mapping(plan, rows)
+        self.assertEqual(mapping[Path(rows[0]['source'])].name, 'Custom title [7³ACG].mkv')
+
+    def test_group_can_be_replaced_cleared_and_reopened(self):
+        rows = self.rows()
+        for group in ('7³ACG', 'Other', ''):
+            checked = plans.check_saved_plan('task', self.plan['revision'], rows, subtitle_group=group)
+            name = checked['mapping'][self.a].name
+            self.assertEqual(name, 'Example S01E01' + (f' [{group}]' if group else '') + '.mkv')
+            self.assertEqual(plans.load_plan('task')['context']['subtitle_group'], group)
+        with self.assertRaisesRegex(ValueError, '非法字符'):
+            plans.check_saved_plan('task', self.plan['revision'], rows, subtitle_group='../bad')
+        self.assertEqual(plans.load_plan('task')['context']['subtitle_group'], '')
+
     def test_manual_episode_correction_and_subtitles(self):
         rows = self.rows()
         rows[1]['episode'] = 2

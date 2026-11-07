@@ -11,6 +11,14 @@ class ReleaseGroupTests(unittest.TestCase):
         self.assertEqual(release_group(title), 'mawen1250')
         self.assertEqual(release_group(title + '.mkv'), 'mawen1250')
 
+    def test_trailing_bracket_signer_after_bdrip(self):
+        for suffix in ('', '.mkv'):
+            self.assertEqual(release_group('[BDrip] Awajima Hyakkei S01 [7³ACG]' + suffix), '7³ACG')
+        self.assertEqual(release_group('[BDRip] Show 【7³ACG】'), '7³ACG')
+        for label in ('1080p', 'ABCDEF12', '01', 'NCOP', 'SP01'):
+            self.assertEqual(release_group(f'[BDrip] Show [{label}]'), '')
+        self.assertEqual(release_group('Show [AfterStory]'), '')
+
     def test_metadata_is_not_a_group(self):
         for name in ('Clannad [BluRay&DVD x264-Hi10P FLAC]',
                      '[1080p] Clannad', '[01] Clannad', '[ABCDEF12] Clannad',

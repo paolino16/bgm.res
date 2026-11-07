@@ -52,6 +52,74 @@ class SubtitleImportTests(unittest.TestCase):
         self.assertTrue(os.path.samefile(self.original.with_suffix('.chs.ass'), self.video.with_suffix('.chs.ass')))
         self.assertEqual(len(list((self.root / 'subtitle_imports').glob('*.json'))), 1)
 
+    def test_same_subtitle_imports_into_two_versions(self):
+        source = self.subtitle('Show EP01.chs.ass')
+        other_video = self.root / 'Show EP01 [Other].mkv'
+        other_original = self.original.with_name('Other [01].mkv')
+        other_video.write_bytes(b'video')
+        other_original.write_bytes(b'video')
+        self.record['entries'][str(other_original)] = {'target': str(other_video)}
+        rows = [{'source': str(source), 'video': str(video), 'suffix': 'chs'}
+                for video in [self.video, other_video]]
+        with patch.object(sub, 'get_record', return_value=self.record), patch.object(sub, 'DATA_PATH', self.root):
+            self.assertEqual(sub.execute_import('task', rows), 2)
+        for video in [self.video, other_video, self.original, other_original]:
+            self.assertEqual(video.with_suffix('.chs.ass').read_bytes(), source.read_bytes())
+        saved = json.loads((self.root / 'task.json').read_text(encoding='utf-8'))
+        for original, video in [(self.original, self.video), (other_original, other_video)]:
+            self.assertEqual(saved['entries'][str(original.with_suffix('.chs.ass'))]['target'],
+                             str(video.with_suffix('.chs.ass')))
+
+    def test_library_chapter_selects_all_versions_regardless_of_video_filename(self):
+        self.subtitle('Show EP03.ass')
+        other = self.root / 'Unnumbered.mkv'
+        other.write_bytes(b'video')
+        self.record['entries']['original EP99.mkv'] = str(other)
+        chapters = [{'number': 1, 'videos': [str(self.video), str(other), str(self.root / 'offline.mkv')]}]
+        _, rows = sub.preview_records([self.record], self.folder, -2, chapters=chapters)
+        self.assertEqual(rows[0]['videos'], [str(self.video), str(other)])
+        self.assertEqual(rows[0]['candidates'], rows[0]['videos'])
+        self.assertIn('媒体库 EP1', rows[0]['reason'])
+
+    def test_library_chapter_is_authoritative_and_does_not_fallback_to_video_name(self):
+        self.subtitle('Show EP01.ass')
+        _, rows = sub.preview_records([self.record], self.folder,
+                                      chapters=[{'number': 2, 'videos': [str(self.video)]}])
+        self.assertEqual(rows[0]['videos'], [])
+        _, rows = sub.preview_records([self.record], self.folder, chapters=[])
+        self.assertEqual(rows[0]['videos'], [])
+
+    def test_conflicting_chapters_require_manual_selection(self):
+        self.subtitle('Show EP01.ass')
+        chapter = {'number': 1, 'videos': [str(self.video)]}
+        _, rows = sub.preview_records([self.record], self.folder, chapters=[chapter, chapter])
+        self.assertEqual(rows[0]['videos'], [])
+        self.assertIn('歧义', rows[0]['reason'])
+
+    def test_explicit_wrong_season_and_conflicting_seasons_do_not_auto_select(self):
+        source = self.subtitle('Show S02E01.ass')
+        seasonal = self.root / 'Show S01E01.mkv'
+        seasonal.write_bytes(b'video')
+        self.record['entries'][str(self.original)] = str(seasonal)
+        chapters = [{'number': 1, 'videos': [str(seasonal)]}]
+        _, rows = sub.preview_records([self.record], files=[str(source)], chapters=chapters)
+        self.assertEqual(rows[0]['videos'], [])
+        source.rename(source.with_name('Show S01E01.ass'))
+        _, rows = sub.preview_records([self.record], self.folder, chapters=chapters)
+        self.assertEqual(rows[0]['videos'], [str(seasonal)])
+        other = self.root / 'Show S02E01.mkv'
+        other.write_bytes(b'video')
+        self.record['entries']['original.mkv'] = str(other)
+        chapters[0]['videos'].append(str(other))
+        _, rows = sub.preview_records([self.record], self.folder, chapters=chapters)
+        self.assertEqual(rows[0]['videos'], [])
+
+    def test_special_subtitle_never_matches_regular_library_episode(self):
+        self.subtitle('Show SP01.ass')
+        _, rows = sub.preview_records([self.record], self.folder,
+                                      chapters=[{'number': 1, 'videos': [str(self.video)]}])
+        self.assertEqual(rows[0]['video'], '')
+
     def test_offset_and_ambiguous_video(self):
         self.subtitle('Show [13].ass')
         _, rows = sub.preview_import(self.record, self.folder, -12)
@@ -240,6 +308,24 @@ class SubtitleImportTests(unittest.TestCase):
         _, rows = sub.preview_records([self.record, {'entries': {'other': str(other)}}], files=[str(selected)])
         self.assertEqual(rows[0]['video'], '')
         self.assertEqual(set(rows[0]['candidates']), {str(self.video), str(other)})
+
+    def test_api_returns_and_validates_all_automatically_selected_versions(self):
+        from src.integration_api import perform
+        from src.utils import utils
+        source = self.subtitle('Show EP01.ass')
+        second = self.root / 'Other.mkv'
+        original = self.original.with_name('Other original.mkv')
+        second.write_bytes(b'video')
+        original.write_bytes(b'video')
+        self.record['entries'][str(original)] = str(second)
+        chapters = [{'number': 1, 'videos': [str(self.video), str(second)]}]
+        with patch.object(utils, 'get_record', return_value=self.record), \
+             patch.object(sub, 'import_targets', wraps=sub.import_targets) as check:
+            result = perform('subtitle-preview', {'ids': ['task'], 'files': [str(source)], 'chapters': chapters})
+        row = result['rows'][0]
+        self.assertEqual(row['videos'], [str(self.video), str(second)])
+        self.assertEqual(check.call_count, 2)
+        self.assertEqual([entry['video'] for entry in row['targets']], row['videos'])
 
     def test_api_batches_records_and_checks_original_once_for_multiple_languages(self):
         from src.integration_api import perform

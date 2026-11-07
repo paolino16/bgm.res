@@ -1,6 +1,14 @@
 'use strict';
 // Shared line icons and accessible hints for the compact desktop controls.
 const paths={
+ star:'<path d="m12 3 2.8 5.7 6.2.9-4.5 4.4 1.1 6.2-5.6-3-5.6 3 1.1-6.2L3 9.6l6.2-.9z"/>',
+ starSelected:'<path fill="currentColor" d="m12 3 2.8 5.7 6.2.9-4.5 4.4 1.1 6.2-5.6-3-5.6 3 1.1-6.2L3 9.6l6.2-.9z"/>',
+ collection:'<rect x="7" y="7" width="14" height="14" rx="2"/><path d="M17 7V3H3v14h4m5-6 5 3-5 3z"/>',
+ locate:'<circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/><path d="M12 2v4m0 12v4M2 12h4m12 0h4"/>',
+ add:'<path d="M12 4v16M4 12h16"/>',
+ down:'<path d="m6 9 6 6 6-6"/>',
+ up:'<path d="m6 15 6-6 6 6"/>',
+ clearRecord:'<path d="M6 3h8l4 4v4M14 3v5h4M6 3v18h5m4-6 6 6m0-6-6 6"/>',
  refresh:'<path d="M20 7v5h-5M4 17v-5h5"/><path d="M6 7a7 7 0 0 1 12-1l2 3M4 15l2 3a7 7 0 0 0 12-1"/>',
  folder:'<path d="M3 6h6l2 2h10v11H3z"/>',
  file:'<path d="M6 3h8l4 4v14H6zM14 3v5h4M9 13h6m-6 4h6"/>',
@@ -30,11 +38,26 @@ const paths={
 function icon(document,name){const svg=document.createElementNS('http://www.w3.org/2000/svg','svg');svg.setAttribute('class','ui-icon');svg.setAttribute('viewBox','0 0 24 24');svg.setAttribute('fill','none');svg.setAttribute('stroke','currentColor');svg.setAttribute('stroke-width','1.6');svg.setAttribute('stroke-linecap','round');svg.setAttribute('stroke-linejoin','round');svg.setAttribute('aria-hidden','true');svg.innerHTML=paths[name]||paths.file;return svg;}
 function actionStyle(text){
  const label=String(text).trim();
+ if(/^(设为默认字幕组|默认字幕组)$/.test(label))return [label==='默认字幕组'?'starSelected':'star',true];
+ if(/^(设为合集|合集设置 \/ 重命名)$/.test(label))return ['collection',true];
+ if(label==='打开')return ['play',true];
+ if(label==='定位')return ['locate',true];
+ if(label==='删除文件')return ['trash',true];
+ if(/^(清除记录|清除本番记录|清除全部异常记录)$/.test(label))return ['clearRecord',true];
+ if(/^(重试|重试核对|刷新删除清单)$/.test(label))return ['refresh',true];
+ if(label==='添加归属')return ['add',true];
+ if(label==='载入作品')return ['next',true];
+ if(label==='预览条目目录迁移')return ['folder',true];
+ if(label==='打开资源整理')return ['archive',true];
+ if(label==='查看异常文件')return ['file',true];
+ if(label==='打开所在目录')return ['folder',true];
+ if(label==='确认全部')return ['checks',true];
+ if(/^(展开|收起)$/.test(label))return [label==='展开'?'down':'up',true];
  if(/^(?:(?:↻\s*)?刷新(?:任务)?|检查文件中…)$/.test(label))return ['refresh',true];
  if(/^(?:←\s*)?返回/.test(label))return ['back',true];
  if(/^(关闭|取消选择|清空)$/.test(label))return ['close',true];
  if(/^(上一页|下一页)$/.test(label))return [label==='上一页'?'back':'next',true];
- if(/^(检测全库字幕|检测本剧字幕|重新检测)/.test(label))return ['scan',true];
+ if(/^(检测全库字幕|检测本剧字幕|重新检测|正在检测…|检测字幕 \d+\/\d+)/.test(label))return ['scan',true];
  if(/^(打开.*文件夹|选择目录)$/.test(label))return ['folder',true];
  if(/^选择.*文件/.test(label))return ['file',true];
  if(/^(修改识别信息|编辑信息)$/.test(label))return ['edit',true];

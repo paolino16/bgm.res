@@ -1,8 +1,29 @@
 const {test}=require('node:test');const assert=require('node:assert/strict');const fs=require('node:fs');const vm=require('node:vm');
 const {visibleFailures,loadDismissed,saveDismissed}=require('../js/job-notices.cjs');
 function storage(){const data=new Map();return {getItem:k=>data.get(k),setItem:(k,v)=>data.set(k,v)};}
+test('initial preload and navigation share a request; failed loading can retry',async()=>{
+ const source=fs.readFileSync(require.resolve('../js/organizer-desktop.cjs'),'utf8');
+ const begin=source.indexOf('  async function load('),end=source.indexOf('  async function resume(',begin);
+ let resolve,reject,calls=0;
+ const context={ipc:{invoke(){calls++;return new Promise((yes,no)=>{resolve=yes;reject=no;});}},state:{loaded:false,jobs:new Map()},isActive:()=>true,notice:()=>{}};
+ vm.createContext(context);vm.runInContext('let loading;'+source.slice(begin,end),context);
+ const first=vm.runInContext('load({preload:true})',context),second=vm.runInContext('load()',context);
+ assert.equal(calls,1);assert.equal(context.state.loaded,false);
+ reject(Error('offline'));await assert.rejects(first,/offline/);await assert.rejects(second,/offline/);
+ const retry=vm.runInContext('load()',context);resolve({tasks:[{uuid:'one'}],jobs:[]});await retry;
+ assert.equal(calls,2);assert.equal(context.state.loaded,true);assert.equal(context.state.tasks[0].uuid,'one');
+});
+test('opening during skipped migration preload starts a normal load',async()=>{
+ const source=fs.readFileSync(require.resolve('../js/organizer-desktop.cjs'),'utf8');
+ const begin=source.indexOf('  async function load('),end=source.indexOf('  async function resume(',begin);
+ let calls=0;
+ const context={ipc:{invoke:async()=>++calls===1?null:{tasks:[],jobs:[]}},state:{loaded:false,jobs:new Map()},isActive:()=>true,notice:()=>{}};
+ vm.createContext(context);vm.runInContext('let loading;'+source.slice(begin,end),context);
+ await vm.runInContext('load({preload:true})',context);
+ assert.equal(calls,2);assert.equal(context.state.loaded,true);
+});
 test('new failures show a close button, while active jobs retain progress and elapsed time',()=>{
- const source=fs.readFileSync(require.resolve('../js/organizer-desktop.cjs'),'utf8');const begin=source.indexOf('  function jobTitle('),end=source.indexOf('  async function load()',begin);
+ const source=fs.readFileSync(require.resolve('../js/organizer-desktop.cjs'),'utf8');const begin=source.indexOf('  function jobTitle('),end=source.indexOf('  async function load(',begin);
  const children=[];const host={replaceChildren(){children.length=0;},appendChild(el){children.push(el);}};
  const jobs=new Map([['old',{id:'old',task_id:'one',action:'deepseek-plan',state:'failed',error:'请求超时'}],['active',{id:'active',task_id:'two',action:'deepseek-plan',state:'running',progress:'第 1/2 批',clientStartedAt:Date.now()-5000}]]);
  function el(tag,cls,text){return {tag,cls,text,children:[],attributes:{},setAttribute(k,v){this.attributes[k]=v;},append(...items){this.children.push(...items);}};}

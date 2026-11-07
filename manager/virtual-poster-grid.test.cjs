@@ -13,8 +13,8 @@ test('mount keeps only nearby cards, batches scroll events, and releases rows on
   let resizeCallback,disconnected=false,released=0,created=0,minimum=152;const pending=new Map();let sequence=0;
   const document={activeElement:null,createElement(){return element();}};
   function element(){return {ownerDocument:document,children:[],style:{},listeners:new Map(),clientWidth:1100,clientHeight:600,scrollTop:0,
-    appendChild(child){this.insertBefore(child,null);},insertBefore(child,next){child.parent=this;const i=this.children.indexOf(next);this.children.splice(i<0?this.children.length:i,0,child);},
-    remove(){if(this.parent)this.parent.children.splice(this.parent.children.indexOf(this),1);},contains(){return false;},
+    appendChild(child){this.insertBefore(child,null);},insertBefore(child,next){child.remove();child.parent=this;const i=this.children.indexOf(next);this.children.splice(i<0?this.children.length:i,0,child);},
+    remove(){if(this.parent)this.parent.children.splice(this.parent.children.indexOf(this),1);this.parent=null;},contains(){return false;},
     addEventListener(name,fn){this.listeners.set(name,fn);},removeEventListener(name){this.listeners.delete(name);},getBoundingClientRect(){return {top:this===root?24-viewport.scrollTop:0};}};}
   const root=element(),viewport=element();
   const window={getComputedStyle:()=>({getPropertyValue:name=>name==='--poster-min'?minimum:0,columnGap:'20px',rowGap:'26px'}),requestAnimationFrame(fn){pending.set(++sequence,fn);return sequence;},cancelAnimationFrame(id){pending.delete(id);}};
@@ -35,5 +35,25 @@ test('mount keeps only nearby cards, batches scroll events, and releases rows on
   instance.setItems(changed);assert.notEqual(root.children[0],same);assert.ok(root.children[0].children.some(card=>card.item===-1));
   instance.setItems([]);assert.equal(root.children.length,0);assert.equal(root.style.height,'0px');
   instance.setItems([100,101]);assert.equal(count(),2);
+  const retained=root.children[0].children[1],createdBefore=created;
+  retained.decodedImage={src:'already-loaded-cover'};
+  instance.setItems([101,102]);assert.equal(root.children[0].children[0],retained);assert.equal(created,createdBefore+1);assert.equal(retained.decodedImage.src,'already-loaded-cover');
+  const reordered=root.children[0].children.slice();instance.setItems([102,101]);assert.equal(root.children[0].children[0],reordered[1]);assert.equal(root.children[0].children[1],reordered[0]);assert.equal(created,createdBefore+1);
   instance.destroy();assert.equal(root.children.length,0);assert.equal(disconnected,true);assert.equal(viewport.listeners.has('scroll'),false);
+});
+
+test('filter waits for decoded covers, cancels obsolete requests, and bounds slow images',async()=>{
+ const document={activeElement:null,createElement:()=>element()},timers=new Map(),decoders=new Map(),released=[];let sequence=0;
+ function element(){return {ownerDocument:document,children:[],style:{},clientWidth:400,clientHeight:400,scrollTop:0,
+  appendChild(child){this.insertBefore(child,null);},insertBefore(child,next){child.remove();child.parent=this;const index=this.children.indexOf(next);this.children.splice(index<0?this.children.length:index,0,child);},
+  remove(){if(this.parent)this.parent.children.splice(this.parent.children.indexOf(this),1);this.parent=null;},contains(){return false;},addEventListener(){},removeEventListener(){},getBoundingClientRect(){return {top:0};}};}
+ const root=element(),viewport=element();
+ const window={getComputedStyle:()=>({getPropertyValue:()=>152,columnGap:'20',rowGap:'26'}),requestAnimationFrame(){},cancelAnimationFrame(){},setTimeout(fn){timers.set(++sequence,fn);return sequence;},clearTimeout(id){timers.delete(id);}};
+ const instance=mount({root,viewport,items:['old'],renderItem:item=>{const card=element();card.item=item;card.querySelectorAll=()=>item==='old'?[]:[{complete:false,decode:()=>new Promise(resolve=>decoders.set(item,resolve))}];return card;},releaseItem:card=>released.push(card),window,ResizeObserver:class{observe(){}disconnect(){}}});
+ const old=root.children[0].children[0];
+ const pending=instance.setItems(['first']);assert.equal(root.children[0].children[0],old);
+ const latest=instance.setItems(['latest']);decoders.get('first')();await pending;assert.equal(root.children[0].children[0],old);
+ decoders.get('latest')();await latest;assert.equal(root.children[0].children[0].item,'latest');assert.ok(released.some(card=>card.item==='first'));assert.equal(timers.size,0);
+ const slow=instance.setItems(['slow']);assert.equal(root.children[0].children[0].item,'latest');[...timers.values()][0]();assert.equal(root.children[0].children[0].item,'slow');decoders.get('slow')();await slow;
+ const closing=instance.setItems(['closing']);instance.destroy();decoders.get('closing')();await closing;assert.equal(root.children.length,0);assert.equal(timers.size,0);
 });

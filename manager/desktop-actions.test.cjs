@@ -2,6 +2,20 @@ const {test}=require('node:test');
 const assert=require('node:assert/strict');
 const path=require('node:path');
 const {mediaType,watchedThrough,episodePath,episodeLink}=require('../js/desktop-actions.cjs');
+test('default subtitle group applies across episodes, survives merging, and falls back when unavailable',()=>{
+ const {subtitleGroup,preferredVersion}=require('../js/desktop-actions.cjs');
+ const {mergeWork}=require('../js/rename-binding-core.cjs');
+ const files=[1,2].flatMap(number=>['Other','SweetSub&LoliHouse'].map(group=>({path:path.resolve(`media/Show EP0${number} [${group}].mkv`),subtitleGroup:group,episodeId:String(number),number:String(number),type:0,availability:'available'})));
+ const work=mergeWork({id:'1',title:'Show',files},{DefaultSubtitleGroup:'SweetSub&LoliHouse'},'WorkSaveNo1');
+ for(const slot of Object.values(work.EPDetails))assert.match(episodePath(work,slot),/SweetSub&LoliHouse/);
+ assert.equal(subtitleGroup(work,files[1].path),'SweetSub&LoliHouse');
+ assert.equal(subtitleGroup({},path.resolve('Show [SweetSub&LoliHouse].mkv')),'SweetSub&LoliHouse');
+ assert.equal(subtitleGroup({},path.resolve('Show.mkv')),'');
+ assert.equal(preferredVersion(work,[files[0]]),null);
+ files[1].availability='missing';
+ assert.equal(episodePath(work,work.EPDetails.EP1),files[0].path);
+ assert.equal(mergeWork({id:'1',title:'Show',files},JSON.parse(JSON.stringify(work)),'WorkSaveNo1').DefaultSubtitleGroup,'SweetSub&LoliHouse');
+});
 test('media filters normalize TV, theatrical, OVA, OAD and WEB names',()=>{
   assert.equal(mediaType({Type:'tv'}),'TV');assert.equal(mediaType({Type:'Movie'}),'剧场版');assert.equal(mediaType({Type:'剧场版'}),'剧场版');assert.equal(mediaType({Type:'ONA'}),'WEB');assert.equal(mediaType({Type:'OAD'}),'OAD');assert.equal(mediaType({Type:'OVA'}),'OVA');
 });
@@ -22,4 +36,16 @@ test('original folder uses recorded source rather than the renamed media path',(
  assert.equal(sourcePath({EPDetails:{EP1:{Versions:[{path:file,source}]}}},file),source);
  assert.equal(sourcePath({RenameBinding:{files:[{path:file,source:'relative.mkv'}]}},file),null);
  assert.equal(sourcePath({RenameBinding:{files:[{path:file,source}]}},path.resolve('other.mkv')),null);
+});
+
+test('default chapter follows progress and ignores unavailable files and collections',()=>{
+ const {defaultChapter}=require('../js/desktop-actions.cjs');
+ const make=()=>({URL:'D:/Show',EPDetails:Object.fromEntries([1,2,3,4].map(i=>['EP'+i,{LocalIndex:i,EpisodeNumber:i,URL:i+'.mkv',Condition:'Unwatched'}]))});
+ const work=make();assert.equal(defaultChapter(work),'EP1');
+ work.EPDetails.EP2.Condition='Watched';assert.equal(defaultChapter(work),'EP3');
+ work.RenameBinding={files:[{path:'D:/Show/3.mkv',availability:'missing'}]};assert.equal(defaultChapter(work),'EP4');
+ work.EPDetails.EP4.Collection=true;assert.equal(defaultChapter(work),'EP1');
+ for(const slot of Object.values(work.EPDetails))slot.Condition='Watched';assert.equal(defaultChapter(work),'EP2');
+ work.EPDetails.EP1.availability='empty';work.EPDetails.EP2.availability='unreadable';assert.equal(defaultChapter(work),null);
+ assert.equal(defaultChapter({}),null);
 });

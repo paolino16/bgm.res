@@ -27,6 +27,13 @@ def release_group(name):
         value = next(v for v in leading.groups() if v is not None).strip()
         if valid_group(value) and name[leading.end():].strip():
             return value
+    # Trailing bracket signer after release metadata, including Unicode names.
+    # Keep plain title suffixes ambiguous unless technical release evidence exists.
+    bracket = re.search(r'(?:\[([^\[\]]+)\]|【([^【】]+)】)\s*$', name)
+    if bracket and technical_group(name[:bracket.start()]):
+        value = next(v for v in bracket.groups() if v is not None).strip()
+        if re.fullmatch(r'[\w][\w.&+\-]*', value) and valid_group(value):
+            return value
     # A trailing single-token signer after technical metadata is release
     # evidence; a plain "Title - Subtitle" alone is not.
     trailing = re.search(r'\s+-\s+([\w][\w.&+\-]*)\s*$', name)

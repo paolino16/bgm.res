@@ -39,6 +39,8 @@ class BangumiNetwork{
     let cached;if(isPublic)try{cached=JSON.parse(await fs.readFile(filename,'utf8'));}catch{}
     if(cached&&/^\/v0\/subjects\/\d+$/.test(u.pathname))try{cached.body=JSON.stringify(this.relocateSubject(JSON.parse(cached.body)));}catch{}
     if(cached&&Date.now()-cached.saved<10*60*1000)return {status:200,body:cached.body,cached:true};
+    // Detail views may show an existing snapshot while the caller refreshes it.
+    if(cached&&options.preferCached&&isPublic)return {status:200,body:cached.body,cached:true,stale:true};
     let response;
     try{response=await this.raw(options);}catch(e){if(cached)return {status:200,body:cached.body,cached:true,stale:true};throw e;}
     if(response.status>=500&&cached)return {status:200,body:cached.body,cached:true,stale:true};

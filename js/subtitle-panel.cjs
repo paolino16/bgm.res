@@ -22,7 +22,6 @@ function create({ipc,node,button,notice,refresh}){
         summaryText=el('p','subtitle-summary');info.append(el('h3','','字幕概览'),summaryText);
         scanControl=button('检测本剧字幕',safe(async()=>{state.scanning=true;state.error='';state.render();try{state.report=await ipc.invoke('subtitles:scan',{id:work.id});await refresh();}catch(error){state.error=error.message;throw error;}finally{state.scanning=false;state.render();}}),'button quiet');
         overview.append(info,scanControl);host.appendChild(overview);
-        const explanation=el('details','subtitle-help');const description=hint('覆盖率按正片章节计算，同一集任一版本有字幕即计入。内封读取字幕轨，外挂匹配同名文件；未检测到不等于没有字幕，画面内嵌需手动确认。有字幕也不保证包含中文。');explanation.append(el('summary','','检测范围与状态说明'),description);host.appendChild(explanation);
         statusHost=el('div');host.appendChild(statusHost);renderImport();renderFiles();
       }
       summaryText.textContent=state.loading?'正在读取已有检测结果…':summaryLabel(state.report?.summary||work.SubtitleSummary);
@@ -45,11 +44,11 @@ function create({ipc,node,button,notice,refresh}){
       const preview=button('匹配预览',safe(async()=>{state.busy=true;state.render();try{
         const context=await ipc.invoke('subtitles:context',work.id);if(!context.tasks.length)throw Error('此作品没有可用整理记录，暂不能自动导入字幕');
         const ownership=new Map();for(const task of context.tasks)for(const file of task.files)if(!ownership.has(normalized(file)))ownership.set(normalized(file),{path:file,task:task.id});
-        const plan=await action('subtitle-preview',{ids:context.tasks.map(task=>task.id),folder:state.folder,files:state.files.length?state.files:undefined,offset:state.offset});
+        const plan=await action('subtitle-preview',{ids:context.tasks.map(task=>task.id),chapters:context.chapters,folder:state.folder,files:state.files.length?state.files:undefined,offset:state.offset});
         const available=new Set(plan.videos.map(normalized));for(const key of ownership.keys())if(!available.has(key))ownership.delete(key);
-        state.plan={ownership,rows:plan.rows.map(row=>({...row,video:row.video&&ownership.has(normalized(row.video))?ownership.get(normalized(row.video)).path:'',reason:row.reason}))};state.subPage=0;
+        state.plan={ownership,rows:plan.rows.map(row=>({...row,videos:[...new Set((row.videos??(row.video?[row.video]:[])).filter(file=>ownership.has(normalized(file))).map(file=>ownership.get(normalized(file)).path))],reason:row.reason}))};state.subPage=0;
       }finally{state.busy=false;state.render();}}),'button primary');preview.disabled=state.busy||(!state.files.length&&!state.folder.trim());
-      const options=el('details','subtitle-help subtitle-import-options');options.append(el('summary','','集数偏移设置'),field('集数偏移',offset),hint('默认 0。仅在字幕与视频集号整体错开时调整，修改后需重新预览。'));controls.append(field('字幕来源',folder),chooseFiles,choose,preview);card.append(controls,options);if(state.busy)card.appendChild(hint('正在处理字幕，请稍候…'));host.appendChild(card);
+      const offsetField=field('集数偏移',offset);offsetField.className+=' subtitle-offset-field';controls.append(field('字幕来源',folder),chooseFiles,choose,offsetField,preview);card.appendChild(controls);if(state.busy)card.appendChild(hint('正在处理字幕，请稍候…'));host.appendChild(card);
       importPreview=el('div','subtitle-import-preview');host.appendChild(importPreview);
       syncImport=()=>{
         const value=state.files.length>1?'已选择 '+state.files.length+' 个字幕文件':state.files[0]||state.folder;
@@ -64,21 +63,42 @@ function create({ipc,node,button,notice,refresh}){
       if(!plan.rows.length){importPreview.appendChild(hint('所选来源未找到支持的字幕文件'));return;}
       const resultHeading=el('div','section-heading subtitle-preview-heading');resultHeading.append(el('h3','','核对导入匹配'),el('small','',plan.rows.length+' 个字幕 · 目标为空的文件将跳过'));importPreview.appendChild(resultHeading);
       for(const row of plan.rows.slice(state.subPage*20,(state.subPage+1)*20)){
-        const section=el('details','subtitle-import-row');section.open=state.importExpanded.has(row.source)||!row.video;section.ontoggle=()=>{if(section.open)state.importExpanded.add(row.source);else state.importExpanded.delete(row.source);};const heading=el('summary','subtitle-match-summary'),title=el('div','subtitle-row-title');title.append(el('strong','',path.basename(row.source)),el('small','subtitle-match-target',row.video?'匹配到 '+path.basename(row.video):'未匹配 · 默认跳过'));heading.append(title,el('span','subtitle-status '+(row.video?'present':'unknown'),row.video?'已匹配':'需确认'));section.appendChild(heading);const body=el('div','subtitle-row-body');body.appendChild(hint(row.source));const grid=el('div','organizer-form-grid'),video=el('select');video.add(new Option('跳过',''));for(const value of plan.ownership.values())video.add(new Option(path.basename(value.path)+' · '+path.dirname(value.path),value.path));video.value=row.video;video.disabled=state.busy;video.onchange=()=>{row.video=video.value;title.children[1].textContent=row.video?'匹配到 '+path.basename(row.video):'未匹配 · 默认跳过';heading.children[1].textContent=row.video?'已匹配':'需确认';heading.children[1].className='subtitle-status '+(row.video?'present':'unknown');updateImportCount();};const suffix=input(row.suffix);suffix.disabled=state.busy;suffix.oninput=()=>row.suffix=suffix.value;grid.append(field('本剧的目标视频',video),field('字幕后缀（例如 chs 或 chs.字幕组）',suffix));body.append(grid,hint(row.reason));section.appendChild(body);importPreview.appendChild(section);
+        const section=el('details','subtitle-import-row');section.open=state.importExpanded.has(row.source)||!row.videos.length;section.ontoggle=()=>{if(section.open)state.importExpanded.add(row.source);else state.importExpanded.delete(row.source);};
+        const heading=el('summary','subtitle-match-summary'),title=el('div','subtitle-row-title'),targetLabel=el('small','subtitle-match-target'),status=el('span');
+        title.append(el('strong','',path.basename(row.source)),targetLabel);heading.append(title,status);section.appendChild(heading);
+        function updateTargets(){targetLabel.textContent=row.videos.length?'已选 '+row.videos.length+' 个版本：'+row.videos.map(file=>path.basename(file)).join('、'):'未选择 · 默认跳过';status.textContent=row.videos.length?'已选择':'需确认';status.className='subtitle-status '+(row.videos.length?'present':'unknown');updateImportCount();}
+        const body=el('div','subtitle-row-body');body.appendChild(hint(row.source));
+        const targets=el('fieldset','subtitle-targets');targets.append(el('legend','','本剧的目标视频（可多选）'),hint('可同时勾选多个版本；不勾选则跳过这条字幕。'));
+        const choices=el('div','subtitle-target-list'),candidates=new Set((row.candidates||[]).map(normalized));
+        const values=[...plan.ownership.values()].sort((a,b)=>Number(candidates.has(normalized(b.path)))-Number(candidates.has(normalized(a.path))));
+        for(const value of values){
+          const label=el('label','subtitle-target-option'),check=input(value.path,'checkbox');check.dataset.subtitleTarget='';check.checked=row.videos.includes(value.path);check.disabled=state.busy;
+          const description=el('span');description.append(el('span','',path.basename(value.path)),el('small','',path.dirname(value.path)));
+          check.onchange=()=>{row.videos=check.checked?[...new Set([...row.videos,value.path])]:row.videos.filter(file=>file!==value.path);updateTargets();};label.append(check,description);choices.appendChild(label);
+        }
+        targets.appendChild(choices);body.appendChild(targets);
+        const grid=el('div','organizer-form-grid'),suffix=input(row.suffix);suffix.disabled=state.busy;suffix.oninput=()=>row.suffix=suffix.value;
+        grid.append(field('字幕后缀（例如 chs 或 chs.字幕组）',suffix));body.append(grid,hint(row.reason));section.appendChild(body);importPreview.appendChild(section);updateTargets();
       }
       pagination(plan.rows.length,state.subPage,page=>{state.subPage=page;state.render();},importPreview);
-      const execute=button('确认并导入字幕',safe(async()=>{if(!state.plan)throw Error('目录或偏移已变化，请重新预览');const groups=new Map();for(const row of plan.rows){if(!row.video)continue;const owner=plan.ownership.get(normalized(row.video));if(!owner)throw Error('目标视频已变化，请重新预览');if(!groups.has(owner.task))groups.set(owner.task,[]);groups.get(owner.task).push({source:row.source,video:row.video,suffix:row.suffix});}if(!groups.size)throw Error('请至少匹配一条字幕');state.busy=true;state.render();let completed=0;
-        try{const warnings=[];for(const [id,rows]of groups){const result=await action('subtitle-execute',{id,rows});if(result.warning)warnings.push(result.warning);for(const row of rows){const original=plan.rows.find(r=>r.source===row.source);if(original)original.video='';}completed+=rows.length;}state.plan=null;state.report=await ipc.invoke('subtitles:details',work.id);await refresh();notice('已导入 '+completed+' 个字幕'+(warnings.length?'；'+warnings.join('；'):''));}catch(error){throw Error('已完成 '+completed+' 条；'+error.message);}finally{state.busy=false;state.render();}
+      const execute=button('确认并导入字幕',safe(async()=>{if(!state.plan)throw Error('目录或偏移已变化，请重新预览');const groups=new Map();for(const row of plan.rows)for(const video of row.videos){const owner=plan.ownership.get(normalized(video));if(!owner)throw Error('目标视频已变化，请重新预览');if(!groups.has(owner.task))groups.set(owner.task,[]);groups.get(owner.task).push({source:row.source,video,suffix:row.suffix});}if(!groups.size)throw Error('请至少匹配一条字幕');state.busy=true;state.render();let completed=0;
+        try{const warnings=[];for(const [id,rows]of groups){const result=await action('subtitle-execute',{id,rows});if(result.warning)warnings.push(result.warning);for(const row of rows){const original=plan.rows.find(r=>r.source===row.source);if(original)original.videos=original.videos.filter(video=>normalized(video)!==normalized(row.video));}completed+=rows.length;}state.plan=null;state.report=await ipc.invoke('subtitles:details',work.id);await refresh();notice('已导入 '+completed+' 份字幕'+(warnings.length?'；'+warnings.join('；'):''));}catch(error){throw Error('已完成 '+completed+' 条；'+error.message);}finally{state.busy=false;state.render();}
       }),'button primary');execute.dataset.subtitleExecute='';const footer=el('div','subtitle-import-footer'),count=el('span','');count.dataset.subtitleCount='';footer.append(count,execute);importPreview.appendChild(footer);updateImportCount();
     }
-    function updateImportCount(){const plan=state.plan;if(!plan)return;const count=plan.rows.filter(row=>row.video).length,execute=host.querySelector('[data-subtitle-execute]'),label=host.querySelector('[data-subtitle-count]');if(execute)execute.disabled=state.busy||!count;if(label)label.textContent='将导入 '+count+' 个字幕 · 跳过 '+(plan.rows.length-count)+' 个；已有同名字幕可能被替换。';}
+    function updateImportCount(){const plan=state.plan;if(!plan)return;const selected=plan.rows.filter(row=>row.videos.length).length,count=plan.rows.reduce((total,row)=>total+row.videos.length,0),execute=host.querySelector('[data-subtitle-execute]'),label=host.querySelector('[data-subtitle-count]');if(execute)execute.disabled=state.busy||!count;if(label)label.textContent='将导入 '+count+' 份字幕（'+selected+' 个源文件） · 跳过 '+(plan.rows.length-selected)+' 个；已有同名字幕可能被替换。';}
     function renderFiles(){
       const section=el('section','subtitle-results'),heading=el('div','section-heading');heading.append(el('h3','','视频文件'),el('small','', '0 个版本'));section.appendChild(heading);
       const toolbar=el('div','subtitle-result-toolbar'),search=input(state.query);search.placeholder='搜索视频文件名或路径…';search.setAttribute('aria-label','搜索字幕检测结果');
       const filter=el('select');filter.setAttribute('aria-label','筛选字幕检测状态');for(const [value,text] of [['all','全部状态'],['present','有字幕'],['unknown','未检测 / 待确认'],['missing','已确认无字幕'],['error','检测异常 / 离线']])filter.add(new Option(text,value));filter.value=state.filter;
-      toolbar.append(search,filter);section.appendChild(toolbar);const list=el('div','subtitle-file-list'),pager=el('div','subtitle-pagination');section.append(list,pager);host.appendChild(section);
+      const manual=el('select');manual.setAttribute('aria-label','全部视频的人工确认');
+      for(const [value,text]of [['burned','画面内嵌字幕'],['none','没有字幕'],['','清除人工确认']])manual.add(new Option(text,value));manual.value='burned';
+      const confirmAll=button('确认全部',safe(async()=>{state.marking=true;state.render();try{state.report=await ipc.invoke('subtitles:mark',{id:work.id,all:true,value:manual.value});await refresh();notice('已更新本作品全部视频的人工确认');}finally{state.marking=false;state.render();}}),'button quiet');
+      confirmAll.title='应用到本作品全部视频，包含筛选外和其他分页的文件';
+      const confirmation=el('div','subtitle-bulk-confirm');confirmation.append(field('人工确认',manual),confirmAll);
+      toolbar.append(search,filter);section.append(toolbar,confirmation);const list=el('div','subtitle-file-list'),pager=el('div','subtitle-pagination');section.append(list,pager);host.appendChild(section);
       function draw(){preserveInteraction(list,()=>{
         const report=state.report||{files:[]};heading.children[1].textContent=(report.files||[]).length+' 个版本';
+        manual.disabled=confirmAll.disabled=Boolean(state.loading||state.scanning||state.busy||state.marking||!report.files?.length);
         list.replaceChildren();pager.replaceChildren();
         const query=state.query.trim().toLocaleLowerCase(),files=(report.files||[]).filter(file=>(state.filter==='all'||fileStatus(file)===state.filter)&&(!query||file.path.toLocaleLowerCase().includes(query)));
         state.filePage=Math.min(state.filePage,Math.max(0,Math.ceil(files.length/20)-1));
@@ -92,10 +112,7 @@ function create({ipc,node,button,notice,refresh}){
           for(const external of file.external||[])tracks.appendChild(el('p','subtitle-track','外挂 · '+path.basename(external)));
           if(!file.internal?.length&&!file.external?.length)tracks.appendChild(hint(file.manual==='burned'?'已手动确认画面内嵌字幕。':file.manual==='none'?'已手动确认没有字幕。':'尚无可展示的字幕轨或外挂；可检测视频，或核对是否为画面内嵌。'));
           if(file.error){const error=el('p','subtitle-feedback error','检测信息：'+file.error);error.setAttribute('role','status');tracks.appendChild(error);}
-          body.appendChild(tracks);const controls=el('div','subtitle-file-controls'),manual=el('select');
-          for(const [value,text]of [['','未手动确认'],['burned','已确认画面内嵌字幕'],['none','已确认没有字幕']])manual.add(new Option(text,value));manual.value=file.manual||'';manual.disabled=Boolean(state.scanning||state.busy||state.marking||file.state==='unavailable');manual.setAttribute('aria-label','人工确认 '+path.basename(file.path));
-          manual.onchange=safe(async()=>{manual.disabled=true;state.marking=true;try{state.report=await ipc.invoke('subtitles:mark',{id:work.id,path:file.path,value:manual.value});await refresh();}finally{state.marking=false;state.render();}});
-          controls.append(field('人工确认',manual),button('打开所在目录',safe(()=>ipc.invoke('library:explorer',{id:work.id,path:file.path,reveal:true})),'button quiet small'));
+          body.appendChild(tracks);const controls=el('div','subtitle-file-controls');controls.appendChild(button('打开所在目录',safe(()=>ipc.invoke('library:explorer',{id:work.id,path:file.path,reveal:true})),'button quiet small'));
           const location=el('p','subtitle-file-path',file.path);location.title=file.path;body.append(controls,location);card.appendChild(body);list.appendChild(card);
         }
         pagination(files.length,state.filePage,page=>{state.filePage=page;draw();},pager);

@@ -103,7 +103,31 @@ def selected_subtitles(folder=None, files=None):
     return sorted({os.path.normcase(os.path.abspath(p)): p for p in candidates}.values())
 
 
-def preview_records(records, folder=None, offset=0, *, files=None):
+def chapter_candidates(chapters, videos, parsed):
+    """Use confirmed library membership; filenames only supply season hints."""
+    if not isinstance(chapters, list):
+        raise ValueError('章节信息无效，请重新预览')
+    paths = {os.path.normcase(os.path.abspath(target)): target for target in videos}
+    index = defaultdict(list)
+    for chapter in chapters:
+        number = Decimal(str(chapter['number']))
+        if not number.is_finite() or number <= 0:
+            raise ValueError('章节集数无效，请重新预览')
+        targets = list(dict.fromkeys(paths[key] for file in chapter.get('videos', [])
+                                    if (key := os.path.normcase(os.path.abspath(file))) in paths))
+        if not targets:
+            continue
+        seasons = set()
+        for target in targets:
+            for alias in [target, *videos[target]]:
+                key = parsed.get(alias)
+                if key and key[0] is not None:
+                    seasons.add(key[0])
+        index[(chapter.get('kind', 'EP'), number, '')].append((targets, seasons))
+    return index
+
+
+def preview_records(records, folder=None, offset=0, *, files=None, chapters=None):
     sources = selected_subtitles(folder, files)
     merged = {}
     for record in records:
@@ -127,10 +151,24 @@ def preview_records(records, folder=None, offset=0, *, files=None):
     shift = Decimal(str(offset))
     if not shift.is_finite():
         raise ValueError('集数偏移必须是有限数值')
+    chapter_index = chapter_candidates(chapters, videos, parsed) if chapters is not None else None
     rows = []
     for source in sources:
         key = episode_key(source.name)
         candidates = []
+        if key and key[1] == 'EP' and chapter_index is not None:
+            season, kind, number, part = key
+            matches = [(targets, seasons) for targets, seasons in chapter_index[(kind, number + shift, part)]
+                       if season is None or not seasons or season in seasons]
+            candidates = list(dict.fromkeys(target for targets, _ in matches for target in targets))
+            # Multiple chapters or conflicting season hints require confirmation.
+            selected = candidates if len(matches) == 1 and len(matches[0][1]) <= 1 else []
+            reason = (f'按媒体库 EP{number + shift} 匹配，已选择同集 {len(selected)} 个版本' if selected
+                      else '章节或季度有歧义，请选择' if candidates else '未找到对应的媒体库 EP，请选择')
+            rows.append({'source': str(source), 'video': selected[0] if len(selected) == 1 else '',
+                         'videos': selected, 'candidates': candidates, 'suffix': detected_suffix(source),
+                         'reason': reason})
+            continue
         if key:
             season, kind, number, part = key
             candidates = [target for target, other_season in index[(kind, number + shift, part)]

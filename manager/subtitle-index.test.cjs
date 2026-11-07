@@ -44,3 +44,12 @@ test('concurrent saves persist the latest update even if a write is already in f
  try{index.index.set('first',{path:'one'});const a=index.save();await started;index.index.set('second',{path:'two'});const b=index.save();release();await Promise.all([a,b]);}finally{release();fs.writeFile=write;}
  const saved=JSON.parse(await fs.readFile(path.join(directory,'subtitle-index.json'),'utf8'));assert.ok(saved.files.second);assert.equal(writes,2);
 });
+
+test('batch confirmation validates every file before changing any manual marks',async t=>{
+ const {directory,index,video,work}=await fixture(t);const second=path.join(directory,'Second.mkv');await fs.writeFile(second,'video');work.EPDetails.EP2={Versions:[{path:second}]};
+ await index.markMany([video,second],'burned');assert.ok(index.details(work).files.every(file=>file.manual==='burned'));
+ await fs.writeFile(path.join(directory,'Second.ass'),'subtitle');
+ await assert.rejects(index.markMany([video,second],'none'),/不能标记无字幕/);
+ assert.ok(index.details(work).files.every(file=>file.manual==='burned'));
+ await index.markMany([video,second],'');assert.ok(index.details(work).files.every(file=>file.manual===undefined));
+});
