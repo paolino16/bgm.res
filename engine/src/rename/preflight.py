@@ -13,9 +13,9 @@ def path_key(path: Path) -> str:
     return os.path.normcase(os.path.abspath(path))
 
 
-def expected_videos(root: Path):
+def expected_videos(root: Path, files=None):
     from .source_scan import files_in
-    candidates = files_in(root) if root.is_dir() else [root]
+    candidates = files if files is not None else files_in(root) if root.is_dir() else [root]
     return sorted(path for path in candidates if path.suffix.lower() in VIDEO_SUFFIX
                   and path.is_file()
                   and not any(tag in path.name for tag in IGNORE_DIR))

@@ -12,11 +12,12 @@ from .trans import Trans
 from ..logger import logger
 from .get_info import Search
 from .metadata_http import metadata_session
-from .source_scan import has_video
+from .source_scan import has_video, source_entries, selected_paths
 from .recognition_progress import progress
 from .task_schema import normalize_task
 from .bangumi_native import plan_subject, subject_directory
 from .rename_strategy import companions, edition_label
+from .subject_discovery import discover_ambiguous, related_candidates, sequel_candidates, prioritize
 from .task_submission import existing_task, ExistingTasks
 from ..utils.title_matching import season_hint, title_parts
 from ..utils.path import TASK_PATH
@@ -61,6 +62,36 @@ FOLDER_PLATFORMS = {
 NUMBERED_OVA = re.compile(r'(?i)(?<![a-z0-9])(?:ova|oad)[\s._-]?(\d{1,3})(?![a-z0-9]|\.\d)')
 
 
+def bracketed_release(name):
+    """Read [group][title]...[year][release tags] as separate fields."""
+    if not re.fullmatch(r'(?:\s*\[[^\[\]]+\])+\s*', name):
+        return None
+    from .release_group import valid_group, technical_group
+    blocks = [block.strip() for block in re.findall(r'\[([^\[\]]+)\]', name)]
+    blocks = [block for block in blocks if not re.fullmatch(r'(?i)[248]K(?:[_ -]HDR)?', block)]
+    if len(blocks) < 2:
+        return None
+    if not valid_group(blocks[0]):
+        return None
+    for index in range(2, len(blocks)):
+        if not re.fullmatch(r'(?:19|20)\d{2}版?', blocks[index]):
+            continue
+        titles = [title for title in blocks[1:index] if title and not technical_group(title)
+                  and title.casefold() not in FOLDER_PLATFORMS]
+        if titles:
+            year = int(blocks[index][:4])
+            platforms = next((FOLDER_PLATFORMS[tag.casefold()] for tag in blocks[index+1:]
+                              if tag.casefold() in FOLDER_PLATFORMS), None)
+            return list(dict.fromkeys((title, year) for title in titles)), platforms
+    if len(blocks) >= 3 and not technical_group(blocks[1]):
+        tags = blocks[2:]
+        if any(technical_group(tag) or tag.casefold() in FOLDER_PLATFORMS for tag in tags):
+            platforms = next((FOLDER_PLATFORMS[tag.casefold()] for tag in tags
+                              if tag.casefold() in FOLDER_PLATFORMS), None)
+            return [(blocks[1], 0)], platforms
+    return None
+
+
 class Rename:
     def __init__(self):
         self.BANGUMI_PATH = Path(cm.get_config('bangumi_path'))
@@ -86,7 +117,7 @@ class Rename:
             return subtitle_group
         groups = set()
         if path.is_dir():
-            for item in path.iterdir():
+            for item in source_entries(path):
                 if item.is_file() and item.suffix.lower() in VIDEO_SUFFIX:
                     if group := release_group(item.name):
                         groups.add(group)
@@ -157,7 +188,7 @@ class Rename:
         if remove_season_hint:
             rtpath_name = remove_season(rtpath_name)
         rtpath_name = remove_episode(rtpath_name)
-        rtpath_name = rtpath_name.strip('!')
+        rtpath_name = rtpath_name.strip()
         return rtpath_name, year
 
     def search_folder_context(self, path: Path):
@@ -172,6 +203,10 @@ class Rename:
             season = season if season is not None else (None if content_folder else hint)
             platforms = platforms or folder_platforms
             if not folder_platforms and not content_folder and not (hint is not None and not title_parts(name)[0]):
+                release_name = current.stem if current == path and current.suffix.lower() in VIDEO_SUFFIX else name
+                release = bracketed_release(release_name)
+                if release:
+                    platforms = platforms or release[1]
                 return name, platforms, season
             if current.parent == current:
                 return '', platforms, season
@@ -186,22 +221,89 @@ class Rename:
             return [(custom_name, 0)]
 
         source_name, _, _ = self.search_folder_context(path)
+        if path.is_dir() and re.fullmatch(r'(?:[A-Z]{2,5}|(?i:Film)\s+\d+)', source_name):
+            from .source_scan import files_in
+            videos = [file for file in files_in(path, recursive=False) if file.suffix.lower() in VIDEO_SUFFIX]
+            if videos:
+                # Release filenames retain the series name lost in container labels.
+                return self.build_search_candidates(sorted(videos)[0])
         if path.is_file() and source_name == path.name:
             source_name = re.sub(r'(?i)\[v\d+\]', '', path.stem).strip()
+            fractional_title = re.search(r'([\u3040-\u30ff\u3400-\u9fffー]{4,})\s*(第\d+\.5[話话集])', source_name)
+            if fractional_title:
+                return [(' '.join(fractional_title.groups()), 0)]
+        release = bracketed_release(source_name)
+        if release:
+            return release[0]
+        signer = re.search(r'\]\s*-\s*[^\[\]]+$', source_name)
+        if signer:
+            source_name = source_name[:signer.start() + 1].rstrip()
+        source_name = re.sub(r'(?i)(?:\s+|(?<=\]))v\d{1,2}(?=\s*(?:\[|$))', '', source_name).strip()
         if source_name != path.name:
             # Do not search a season marker or a year/month container as a title.
             if not title_parts(source_name)[0] or re.fullmatch(r'\d{4}(?:[-._]\d{1,2})?', source_name):
                 return []
         year_match = re.search(r'[\s._-][(\[]?((?:19|20)\d{2})[)\]]?\s*$', source_name)
         source_year = int(year_match.group(1)) if year_match else 0
+        bracket_year = re.search(r'\[((?:19|20)\d{2})\]', source_name)
+        if not source_year and bracket_year:
+            source_year = int(bracket_year[1])
+        if not source_year and not re.search(r'[\[\]【】]', source_name):
+            for parent in path.parents:
+                match = re.fullmatch(r'((?:19|20)\d{2})-\d{2}', parent.name)
+                if match:
+                    source_year = int(match[1])
+                    break
         if year_match:
             source_name = source_name[:year_match.start()].rstrip()
         # Technical release groups must never leak into a fallback query.
         source_name = re.sub(r'(?i)\[[^\]]*(?:\d{3,4}p|x26[45]|h[ .]?26[45]|ma10p|flac|aac|bluray|bdrip)[^\]]*\]', '', source_name).strip()
-        raw_candidates = [remove_tag(source_name), remove_tag(source_name, True)]
+        source_name = re.sub(r'(?i)\([^()]*(?:DVD|BD|\d{3,4}p|x[ .]?26[45])[^()]*\)', '', source_name).strip()
+        source_name = re.sub(r'(?i)\s+(?:JPBD|BD)\s+Remux\b.*$', '', source_name).strip()
+        source_name = re.sub(r'(?i)\s+CUSTOM\s+REMASTER\b.*$', '', source_name).strip()
+        # Episode zero before an explicit OVA marker is release numbering.
+        source_name = re.sub(r'(?i)\s*-\s*0+\s+(?=OVA\b)', ' ', source_name)
+        # Parenthesized words inside an unbracketed title are title evidence.
+        def protect_parenthesized_title(match):
+            if re.search(r'(?i)(?:BDRip|BD|FLAC|AAC|x26[45]|\d{3,4}p|Ma10)', match[1]):
+                return match[0]
+            return '｟' + match[1] + '｠'
+
+        protected = re.sub(r'\(([^()]*[A-Za-z][^()]*)\)', protect_parenthesized_title, source_name)
+        raw_candidates = [remove_tag(protected).replace('｟', '(').replace('｠', ')'),
+                          remove_tag(protected, True).replace('｟', '(').replace('｠', ')')]
+        # Native-script alternate titles are often absent from the Latin index.
+        native_titles = re.findall(r'\(([^()]*[\u3040-\u30ff\u3400-\u9fff][^()]*)\)', source_name)
+        native_titles = [title for title in native_titles if not re.fullmatch(r'(?i)(?:TV)?未放送', title)]
+        raw_candidates = native_titles + raw_candidates
+        mixed_title = re.fullmatch(r'[A-Za-z][A-Za-z -]*\s+([\u3400-\u9fff]{4,})', raw_candidates[0]) if raw_candidates else None
+        if mixed_title:
+            raw_candidates.insert(0, mixed_title[1])
+        if path.is_file():
+            labels = re.findall(r'\[([^\[\]]+)\]', source_name)
+            special = any(re.search(r'(?i)\b(?:OAD|OVA)\b', label) or re.fullmatch(r'0+|\d+\.5', label) for label in labels)
+            subtitles = [label for label in labels[1:] if re.fullmatch(r'[A-Za-z]+(?:-[A-Za-z]+)+', label)]
+            if special and not any(re.search(r'(?i)\b(?:OAD|OVA)\s*\d', label) for label in labels):
+                raw_candidates = [name + ' OAD' for name in raw_candidates]
+            elif subtitles:
+                raw_candidates = [name + ' ' + subtitles[0] for name in raw_candidates]
+        directory_source = path.is_dir()
         candidates: List[tuple[str, int]] = []
         seen = set()
         for raw_candidate in raw_candidates:
+            raw_candidate = re.sub(r'(?i)\s+-\s+(?:TV|Movie)\s*\+.*$', '', raw_candidate).strip()
+            raw_candidate = re.sub(r'(?i)\s+(?:(?:[248]K\s+)?Remaster(?:ed)?\s+Edition|Blu[- ]?ray\s+BOX|BD[- ]BOX|Ver[. ](?:19|20)\d{2}\s+[248]Kリマスター)\b.*$', '', raw_candidate).strip()
+            raw_candidate = re.sub(r'(?i)\s+\d{3,4}p\b.*$', '', raw_candidate).strip()
+            candidate_year = source_year
+            trailing_year = re.search(r'\s+((?:19|20)\d{2})\s*$', raw_candidate)
+            if trailing_year:
+                candidate_year = int(trailing_year[1])
+                raw_candidate = raw_candidate[:trailing_year.start()].rstrip()
+            # Batch directories often append the included episodes after the title.
+            if directory_source:
+                batch = re.search(r'\s+0{0,2}1\s*[-–~～]\s*(\d{1,3})\s*$', raw_candidate)
+                if batch and int(batch[1]) > 1:
+                    raw_candidate = raw_candidate[:batch.start()].rstrip()
             if source_name != path.name:
                 # Collection release annotations are not part of the show title.
                 raw_candidate = re.sub(r'(?i)\b\d+(?:st|nd|rd|th)\s+anniversary\b', '', raw_candidate).strip()
@@ -214,7 +316,7 @@ class Rename:
                 )
                 if not title_parts(normalized_name)[0]:
                     continue
-                key = (normalized_name, year or source_year)
+                key = (normalized_name, year or candidate_year)
                 if key in seen:
                     continue
                 seen.add(key)
@@ -247,7 +349,12 @@ class Rename:
         self.search.network_error = None
         _, folder_platforms, folder_season = self.search_folder_context(path)
         self.search.requested_platforms = folder_platforms
+        if not folder_platforms and folder_season is not None and not path.is_file():
+            self.search.requested_platforms = ('TV', 'WEB', 'ONA')
         self.search.requested_season = season_hint(custom_name) if custom_name else folder_season
+        if path.is_file() and re.search(r'(?i)\b(?:OVA|OAD)\b', path.stem):
+            self.search.requested_platforms = ('OVA', 'OAD')
+            self.search.requested_season = None
         last_error = ''
         # Explicit IDs identify the subject without a searchable folder title.
         # OVA / Specials / season-only folders must still reach ID validation.
@@ -256,6 +363,7 @@ class Rename:
         else:
             candidates = self.build_search_candidates(path, custom_name)
         for rtpath_name, year in candidates:
+            self.search.strict_year = bool(year)
             logger.info(f'[处理任务] 尝试搜索名: {rtpath_name} (year={year})')
             task_type = self.check_task_type(
                 _uuid,
@@ -747,7 +855,7 @@ class Rename:
 
     def _map_extra_folder_files(self, extra_dir: Path, work_path: Path) -> None:
         target_dir = work_path / 'extra'
-        for source_path in sorted(extra_dir.rglob('*')):
+        for source_path in sorted(source_entries(extra_dir, recursive=True)):
             if not source_path.is_file():
                 continue
 
@@ -769,12 +877,12 @@ class Rename:
         if is_special_dir_name(path.name):
             self._map_special_folder_files(path, work_path)
             return
-        for item_path in path.iterdir():
+        for item_path in source_entries(path):
             if item_path.is_dir():
                 self._map_sp_extra_folders(item_path, work_path)
 
     def _map_special_folder_files(self, folder: Path, work_path: Path) -> None:
-        for video in sorted(folder.rglob('*')):
+        for video in sorted(source_entries(folder, recursive=True)):
             if not video.is_file() or video.suffix.lower() not in VIDEO_SUFFIX:
                 continue
             if any(tag in video.name for tag in IGNORE_DIR):
@@ -783,7 +891,7 @@ class Rename:
             # can be inferred from the fact that a file is a special.
             target = work_path / self.get_season_folder_name(0) / video.relative_to(folder)
             self.R[video] = target
-            self._map_associated_files(video, target, list(video.parent.iterdir()))
+            self._map_associated_files(video, target, list(source_entries(video.parent)))
 
     def _contains_video_files(self, path: Path) -> bool:
         try:
@@ -829,13 +937,13 @@ class Rename:
 
         if path.is_dir():
             is_video = False
-            for sub_path in path.iterdir():
+            for sub_path in source_entries(path):
                 if not sub_path.is_dir() and sub_path.suffix.lower() in VIDEO_SUFFIX:
                     is_video = True
 
             selected = getattr(self, 'selected_subject_ids', [])
             multiple = isinstance(selected, list) and len(selected) > 1
-            if multiple or is_video or is_sp_extra_dir_name(path.name) or is_special_dir_name(path.name):
+            if selected_paths() is not None or multiple or is_video or is_sp_extra_dir_name(path.name) or is_special_dir_name(path.name):
                 return self._process(
                     path,
                     _is_anime,
@@ -853,7 +961,7 @@ class Rename:
                 errors = []
                 reused = []
                 created = 0
-                for sub_path in path.iterdir():
+                for sub_path in source_entries(path):
                     result = self._process(
                         sub_path,
                         _is_anime,
@@ -929,7 +1037,7 @@ class Rename:
                 bgm_id=bgm_id,
             )
             logger.info(f'[处理任务] Bangumi 搜索到的动画名称: {s1_name}')
-            if not s1_name and year != 0 and bgm_id is None and not getattr(self.search, 'network_error', None):
+            if not s1_name and year != 0 and bgm_id is None and not getattr(self.search, 'strict_year', False) and not getattr(self.search, 'network_error', None):
                 s1_name, s1_info = self.search.get_bangumi_info(
                     rtpath_name,
                     0,
@@ -1010,7 +1118,7 @@ class Rename:
                 pos += 0.5
 
         if path.is_dir():
-            path_file_num = len([i for i in path.iterdir() if i.is_file()])
+            path_file_num = len([i for i in source_entries(path) if i.is_file()])
             if path_file_num > 6:
                 pos += 0.4
             else:
@@ -1143,6 +1251,9 @@ class Rename:
             skip_search,
         )
         if isinstance(task_type_result, str):
+            if (task_type_result.startswith('[Bangumi]') and not cus_bgm_id and not cus_tmdb_id
+                    and not cus_name and not skip_search):
+                discover_ambiguous(path, self.search)
             return self.error_reply(
                 _uuid,
                 task_type_result,
@@ -1199,6 +1310,22 @@ class Rename:
             work_path = subject_directory(base, {**info, 'first_air_date': resolved_year})
             progress('扫描文件与匹配章节')
             self.R, decisions = plan_subject(path, info, work_path, subtitle_group)
+            regular_pending = [row for row in decisions if row.get('category') == 'unresolved'
+                               and row.get('episode_type') in (None, 0) and row.get('episode') is not None]
+            from .subject_discovery import _regular_numbers, _whole_episode
+            main_numbers = _regular_numbers(catalog)
+            pending_numbers = [_whole_episode(row.get('episode')) for row in regular_pending]
+            overflow = (main_numbers and pending_numbers and
+                        all(n is not None and n > max(main_numbers) for n in pending_numbers))
+            if (not cus_bgm_id and len(regular_pending) >= 2 and overflow
+                    and self.search.requested_season is None
+                    and not any(row.get('episode_id') for row in decisions)):
+                self._task_metadata.pop('subject_id', None)
+                return self.error_reply(
+                    _uuid, '[Bangumi] 片名候选的章节目录无法解释本地集号，请确认季别或归属作品',
+                    path, is_anime, is_movie, name, None, subtitle_group, resolved_year,
+                    cus_tmdb_id, None)
+
             season_id = None
             output_dir_path = work_path
             self._task_metadata.update(
@@ -1212,6 +1339,12 @@ class Rename:
                               'anime_movie_path': str(self.ANIME_MOVIE_PATH),
                               'episodes': catalog, 'bindings': decisions,
                               'task_metadata': dict(self._task_metadata)}
+            if not selected or len(selected) == 1:
+                suggestions = related_candidates(decisions, relations)
+                suggestions.extend(sequel_candidates(decisions, catalog, relations, self.search))
+                if suggestions:
+                    native_context['suggested_subjects'] = suggestions
+                    prioritize(self.search, suggestions)
             if isinstance(selected, list) and len(selected) > 1:
                 from .subject_selection import unresolved_bindings
                 from .plan_resolution import load_subject_context
@@ -1265,11 +1398,11 @@ class Rename:
                 )
                 self.R[path] = target_path
                 local_files = [
-                    item for item in path.parent.iterdir() if item.is_file()
+                    item for item in source_entries(path.parent) if item.is_file()
                 ]
                 self._map_associated_files(path, target_path, local_files)
             else:
-                local_files = [item for item in path.iterdir() if item.is_file()]
+                local_files = [item for item in source_entries(path) if item.is_file()]
                 for item_path in local_files:
                     if item_path.suffix.lower() in VIDEO_SUFFIX:
                         target_path = work_path / self.get_movie_filename(
@@ -1524,6 +1657,7 @@ class Rename:
             'name': name, 'work_path': str(work_path), 'is_movie': is_movie,
             'subtitle_group': subtitle_group,
             **native_context,
+            **({'source_files': list(map(str, selected_paths()))} if selected_paths() is not None else {}),
         }).trans_file()
         self.R = {}
         if isinstance(trans_result, str):
@@ -1556,7 +1690,7 @@ class Rename:
         tv_info: Optional[Dict] = None,
     ):
         """传统处理方式"""
-        candidates = path.parent.iterdir() if path.is_file() else path.rglob('*')
+        candidates = source_entries(path.parent) if path.is_file() else source_entries(path, recursive=True)
         videos = [item for item in candidates if item.is_file()
                   and item.suffix.lower() in VIDEO_SUFFIX
                   and not any(tag in item.name for tag in IGNORE_DIR)]
@@ -1566,7 +1700,7 @@ class Rename:
         )
         if path.is_file():
             logger.info(f"[处理任务] 开始对 [单文件] {path.name}处理")
-            local_files = [item for item in path.parent.iterdir() if item.is_file()]
+            local_files = [item for item in source_entries(path.parent) if item.is_file()]
             self.process_sub(
                 rtpath_name,
                 None,
@@ -1588,12 +1722,12 @@ class Rename:
                 if is_special_dir_name(folder.name):
                     self._map_special_folder_files(folder, work_path)
                     return
-                local_files = [item for item in folder.iterdir() if item.is_file()]
+                local_files = [item for item in source_entries(folder) if item.is_file()]
                 repeat = find_unique_parts_in_videos(folder)
                 majority = self._get_folder_majority_season(
                     local_files, rtpath_name, season_id, tv_info,
                 )
-                for item in folder.iterdir():
+                for item in source_entries(folder):
                     if item.is_dir():
                         process_folder(item)
                     else:
@@ -1627,6 +1761,7 @@ class Rename:
         warnings = getattr(search, 'recall_warnings', [])
         return {
             **getattr(self, '_task_metadata', {}),
+            **({'source_files': list(map(str, selected_paths()))} if selected_paths() is not None else {}),
             'path': str(path),
             'is_anime': is_anime,
             'is_movie': is_movie,

@@ -2,6 +2,7 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 from ..logger import logger
+from .source_scan import source_entries, selected_paths
 from .utils import VIDEO_SUFFIX
 from .rename_strategy import companions
 from ..ai.client import AIClient
@@ -78,11 +79,14 @@ class AIProcessor:
 
         new_mapping: Dict[Path, Path] = {}
         all_local_files = (
-            list(base_path.rglob("*"))
+            list(source_entries(base_path, recursive=True))
             if base_path.is_dir()
-            else list(base_path.parent.iterdir())
+            else list(source_entries(base_path.parent))
         )
         all_local_files = [p for p in all_local_files if p.is_file()]
+
+        selection = selected_paths()
+        allowed = set(selection) if selection is not None else None
 
         try:
             # 记录季度映射信息
@@ -103,7 +107,7 @@ class AIProcessor:
                 # 从相对路径还原绝对路径
                 source_path = (base_path / relative_path_str).resolve()
 
-                if not source_path.exists():
+                if not source_path.exists() or (allowed is not None and source_path not in allowed):
                     logger.warning(f"[AI处理] AI返回的文件路径不存在: {source_path}")
                     continue
 
@@ -168,7 +172,7 @@ class AIProcessor:
             if path.suffix.lower() in VIDEO_SUFFIX:
                 video_files.append(path)
         else:
-            for item in path.rglob("*"):
+            for item in source_entries(path, recursive=True):
                 if item.is_file() and item.suffix.lower() in VIDEO_SUFFIX:
                     video_files.append(item)
 

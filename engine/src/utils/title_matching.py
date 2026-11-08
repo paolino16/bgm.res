@@ -20,6 +20,12 @@ _SEASON = re.compile(
 _SPECIAL = re.compile(r'(?i)剧场版|劇場版|特别篇|特別篇|总集篇|総集編|\b(?:movie|ova|oad|specials?)\b')
 
 
+def identity_suffix(text):
+    text = unicodedata.normalize('NFKC', str(text or '')).strip()
+    match = re.search(r"[!'’☆★]+$", text)
+    return match[0].replace('’', "'") if match else ''
+
+
 def normalize_title(text):
     text = unicodedata.normalize('NFKC', str(text or '')).casefold()
     return ''.join(char for char in text if char.isalnum())
@@ -132,6 +138,8 @@ def title_score(titles, query, *, year=0, date='', fallback_season=None, request
             else:
                 tokens = re.findall(r'[^\W_]+', variant.casefold())
                 grade = 2 if len(tokens) > 1 and all(normalize_title(t) in full_title for t in tokens) else 1 if len(base_query) >= 5 and ratio >= .8 else 0
+            if grade == 5 and identity_suffix(variant) != identity_suffix(title) and (identity_suffix(variant) or identity_suffix(title)):
+                grade = 4
             lexical = (grade, int(full_title == full_query),
                        int(unicodedata.normalize('NFKC', title).casefold().strip() == variant.casefold().strip()),
                        int(special == query_special), ratio, -abs(len(base_title) - len(base_query)))

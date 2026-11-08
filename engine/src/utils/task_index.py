@@ -65,6 +65,7 @@ class TaskIndex:
                 failed += bool(error)
                 rows.append({
                     'id': index, 'uuid': task['uuid'], 'path': task.get('path', ''),
+                    'manifest_scoped': 'source_files' in task,
                     'name': task.get('name'), 'season': task.get('season_id'),
                     'bgm_id': task.get('subject_id') or task.get('bgm_id', ''),
                     'subject_ids': task.get('subject_ids') or ([str(task.get('subject_id') or task.get('bgm_id'))]
@@ -84,12 +85,12 @@ class TaskIndex:
                 # A source pack can legitimately contain multiple Bangumi subjects.
                 # After subject-native splitting those are separate tasks, not duplicates.
                 key = (path_key, str(row.get('bgm_id') or '')) if row.get('layout') == 'bangumi' else (path_key, '')
-                if path_key:
+                if path_key and not row['manifest_scoped']:
                     groups[key].append(row)
             for row in rows:
                 path_key = task_path_key(row['path'])
                 key = (path_key, str(row.get('bgm_id') or '')) if row.get('layout') == 'bangumi' else (path_key, '')
-                group = groups.get(key, [])
+                group = [] if row['manifest_scoped'] else groups.get(key, [])
                 row['duplicate_count'] = len(group) if len(group) > 1 else 0
                 row['duplicate_task_ids'] = [item['uuid'] for item in group] if len(group) > 1 else []
             duplicates = sum(len(group) - 1 for group in groups.values())

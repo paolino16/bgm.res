@@ -12,3 +12,6 @@ openai>=1.54.0
 hachoir>=3.3.0
 google-genai>=0.8.0
 pykakasi>=2.3.0,<3
+beautifulsoup4>=4.12,<5
+py7zr>=1.0,<2
+rarfile>=4.2,<5

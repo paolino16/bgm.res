@@ -1,6 +1,6 @@
 const fs=require('fs');const path=require('path');
 const core=require('./rename-binding-core.cjs');
-async function start({ipcMain,app,sysdata,Datastore}){
+async function start({ipcMain,app,sysdata,snapshotStore,Datastore}){
   const directory=process.env.BGM_RES_DATA_DIR||path.join(app.getPath('appData'),'bgm.res');fs.mkdirSync(directory,{recursive:true});
   const filename=path.join(directory,'MediaData.db');
   if(fs.existsSync(filename))fs.copyFileSync(filename,filename+'.startup-backup');
@@ -14,6 +14,7 @@ async function start({ipcMain,app,sysdata,Datastore}){
   }
   const {BangumiNetwork}=require('./bangumi-network.cjs');
   const network=new BangumiNetwork({net:require('electron').net,directory});
+  require('./discovery.cjs').register({ipcMain,network,sysdata,snapshotStore,safeStorage:require('electron').safeStorage});
   const thumbnails=new (require('./cover-thumbnails.cjs').CoverThumbnails)({directory,nativeImage:require('electron').nativeImage});
   const metadataRefreshes=new Map();
   ipcMain.handle('bangumi:request',async(event,options)=>{
@@ -80,7 +81,14 @@ async function start({ipcMain,app,sysdata,Datastore}){
   ipcMain.handle('media:duration',(_event,{id,path:target})=>{const work=getWork(id);const files=[...require('./subtitle-index.cjs').filesOf(work),...[...(work.RenameBinding?.files||[]),...(work.RenameBinding?.resources||[])].map(file=>file.path),...Object.values(work.SPDetails||{}).flatMap(slot=>(slot.Versions||[{path:slot.AbsolutePath||(slot.URL&&path.resolve(work.URL,slot.URL))}]).map(file=>file.path))].filter(Boolean);if(!files.some(file=>core.normalized(file)===core.normalized(target)))throw Error('只能读取已登记的视频');return durations.get(target);});
   const decorate=()=>subtitles.decorate(thumbnails.decorate(coreClone(data)));
   const getWork=id=>{if(!/^WorkSaveNo\d+$/.test(id)||!data[id])throw Error('番剧不存在');return data[id];};
+  require('./cadensview-main.cjs').register({ipcMain,app,sysdata,getWork});
   ipcMain.handle('library:read',decorate);
+  ipcMain.handle('library:play',async(_event,{id,path:target})=>{
+    const work=getWork(id);
+    const registered=[...(work.RenameBinding?.files||[]),...(work.RenameBinding?.resources||[]),...['EPDetails','SPDetails'].flatMap(kind=>Object.values(work[kind]||{}).flatMap(slot=>[{path:slot.AbsolutePath||(slot.URL&&path.resolve(work.URL,slot.URL))},...(slot.Versions||[])]))];
+    if(typeof target!=='string'||!path.isAbsolute(target)||!registered.some(file=>file.path&&core.normalized(file.path)===core.normalized(target)))throw Error('只能播放当前作品已登记的文件');
+    return require('./episode-playlist.cjs').play({work,file:target,directory,shell:require('electron').shell});
+  });
   ipcMain.handle('library:explorer',async(_event,{id,path:target,reveal=false,original=false})=>{
     const work=getWork(id);
     const registered=[work.URL,...(work.RenameBinding?.files||[]).map(file=>file.path),...['EPDetails','SPDetails'].flatMap(kind=>Object.values(work[kind]||{}).flatMap(slot=>[slot.AbsolutePath,...(slot.Versions||[]).map(v=>v.path)]))].filter(Boolean);
@@ -201,8 +209,16 @@ async function start({ipcMain,app,sysdata,Datastore}){
     if(options?.preload&&!fs.existsSync(path.join(integration.sourceRoot(),'.bgm-storage.json')))return null;
     return organizer.request('GET','tasks?summary=true');
   });
-  ipcMain.handle('organizer:action',(_event,{action,body})=>{
-    if(!['recognize','retry','save-task','plan','check','execute','add-subject','layout','config','save-config','subtitle-preview','subtitle-execute','cancel-review','deepseek-plan','deepseek-history','delete-task-preview','delete-task'].includes(action))throw Error('不支持的整理操作');
+  ipcMain.handle('organizer:action',async(_event,{action,body})=>{
+    if(!['recognize','retry','save-task','plan','check','execute','add-subject','layout','config','save-config','subtitle-preview','subtitle-execute','subtitle-versions','subtitle-manage','subtitle-recover','cancel-review','deepseek-plan','deepseek-history','delete-task-preview','delete-task'].includes(action))throw Error('不支持的整理操作');
+    if(action==='subtitle-manage'&&body.mode==='remove'){
+      const {dialog,BrowserWindow}=require('electron');
+      const current=await organizer.action('subtitle-versions',{ids:body.ids,videos:body.videos});
+      let preview;for(;;){const job=await organizer.request('GET','jobs/'+current.job_id);if(job.state==='failed')throw Error(job.error);if(job.state==='completed'){preview=job.result;break;}await new Promise(resolve=>setTimeout(resolve,100));}
+      const group=preview.groups.find(group=>group.id===body.group&&group.token===body.token);if(!group)throw Error('字幕已变化，请刷新后重试');
+      const result=await dialog.showMessageBox(BrowserWindow.fromWebContents(_event.sender),{type:'warning',buttons:['取消','移入回收站'],defaultId:0,cancelId:0,message:'移除整套字幕？',detail:(group.suffix||'未命名版本')+' · '+group.files.length+' 份字幕\n同步处理已登记的原目录与媒体库字幕；保留视频和其他字幕版本。'});
+      if(result.response!==1)return {cancelled:true};
+    }
     return organizer.action(action,body);
   });
   const refreshedJobs=new Set();
@@ -210,6 +226,18 @@ async function start({ipcMain,app,sysdata,Datastore}){
   ipcMain.handle('organizer:job',async(_event,id)=>{
     if(!/^[a-f0-9]{32}$/.test(id))throw Error('无效作业编号');
     const job=await organizer.request('GET','jobs/'+id);
+    if(job.state==='completed'&&['subtitle-manage','subtitle-recover'].includes(job.action)&&!refreshedJobs.has(id)){
+      if(!jobRefreshes.has(id))jobRefreshes.set(id,(async()=>{
+        const warnings=[],allowed=new Set(Object.values(data).flatMap(work=>require('./subtitle-index.cjs').filesOf(work||{})).map(core.normalized));
+        const affected=(job.result?.videos||[]).filter(file=>allowed.has(core.normalized(file)));
+        try{await subtitles.scanFiles(affected,{externalOnly:true});}catch(error){warnings.push('字幕已更新，检测结果待刷新：'+error.message);}
+        try{if(job.action==='subtitle-manage'&&job.result?.sources?.length)require('./subtitle-inbox.cjs').recordImported(job.result.sources);}catch(error){warnings.push('字幕已导入，下载包处理状态待更新：'+error.message);}
+        for(const window of require('electron').BrowserWindow.getAllWindows())if(!window.isDestroyed())window.webContents.send('library:updated');
+        return warnings.join('；');
+      })());
+      await jobRefreshes.get(id);refreshedJobs.add(id);
+    }
+    if(job.state==='completed'&&['subtitle-manage','subtitle-recover'].includes(job.action)&&jobRefreshes.has(id)){const warning=await jobRefreshes.get(id);if(warning)job.result={...job.result,warning:[job.result?.warning,warning].filter(Boolean).join('；')};}
     if(job.state==='completed'&&job.action==='delete-task'&&!refreshedJobs.has(id)){
       await transaction(async()=>{
         for(const key of require('./task-library-cleanup.cjs').removedWorks(data,job.task_id)){
@@ -253,7 +281,7 @@ async function start({ipcMain,app,sysdata,Datastore}){
   ipcMain.on('library:sort',(event,pref)=>{data.LibrarySort=pref;save('LibrarySort',pref).then(()=>{event.returnValue=core.projection(data);},e=>{event.returnValue={error:e.message};});});
   ipcMain.on('library:clear',event=>{db.remove({},{multi:true},err=>{if(!err)for(const k of Object.keys(data))delete data[k];event.returnValue=err?{error:err.message}:{ok:true};});});
   function hydrate(){return hydrator.hydrate();}
-  return {data,report,hydrate};
+  return {data,report,hydrate,organizer};
 }
 const coreClone=x=>JSON.parse(JSON.stringify(x));
 module.exports={start};

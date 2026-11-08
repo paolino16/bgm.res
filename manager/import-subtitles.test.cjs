@@ -17,7 +17,8 @@ for(const fail of [false,true])test('import automatically checks only affected s
   const filename=path.resolve('js/rename-binding-main.cjs'),nativeRequire=createRequire(filename),module={exports:{}};
   class DB{loadDatabase(cb){cb();}find(q,cb){cb(null,[]);}update(q,v,o,cb){cb(null);}}
   vm.runInNewContext(await fs.readFile(filename,'utf8'),{module,exports:module.exports,__dirname:path.dirname(filename),process:{env:{BGM_RES_DATA_DIR:directory}},require:name=>{
-    if(name==='electron')return {net:{},BrowserWindow:{getAllWindows:()=>[{isDestroyed:()=>false,webContents:{send:event=>events.push(event)}}]}};
+    if(name==='./cadensview-main.cjs')return {register(){}};
+  if(name==='electron')return {net:{},BrowserWindow:{getAllWindows:()=>[{isDestroyed:()=>false,webContents:{send:event=>events.push(event)}}]}};
     if(name==='./rename-integration.cjs')return {create:({onReturn})=>({onReturn,request:async()=>({state:'completed',action:'execute',task_id:'one'})})};
     if(name==='./metadata-hydration.cjs')return {create:()=>({hydrate:async()=>{}})};
     if(name==='./subtitle-index.cjs'){

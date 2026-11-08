@@ -80,16 +80,54 @@ function adopt(data){for(const [id,work]of Object.entries(data))if(state.data[id
 async function read(){adopt(await ipc.invoke('library:read'));}
 async function edit(work,changes){if(state.busy)return false;state.busy=true;try{const updated=await ipc.invoke('library:edit',{id:work.id,changes});state.data[work.id]=updated;return true;}catch(error){notice(changes.DefaultSubtitleGroup&&error.message.includes('不支持的修改')?'默认字幕组尚未保存：后台仍在运行旧版本，请完全退出应用后重新打开，再设置一次。刷新页面不会更新后台。':'保存失败：'+error.message);return false;}finally{state.busy=false;}}
 async function openFile(file){try{const stat=await fs.promises.stat(file);if(stat.isFile()&&!stat.size)throw Error('这是空文件，无法打开');if(stat.isDirectory()){await ipc.invoke('library:explorer',{id:activeWork()?.id,path:file});return;}const error=await shell.openPath(file);if(error)throw Error(error);}catch(error){notice('无法打开：'+error.message);}}
+async function playEpisode(work,file){try{await ipc.invoke('library:play',{id:work.id,path:file});}catch(error){notice('无法播放：'+error.message);}}
+const cadensviewUI=require('./js/cadensview-ui.cjs').create({ipc,node,button,notice,shell});
 async function reveal(file){try{await ipc.invoke('library:explorer',{id:activeWork()?.id,path:file,reveal:true});}catch(error){notice(error.message);}}
 function setHeader(title,subtitle,eyebrow='COLLECTION'){$('#page-title').textContent=title;$('#page-title').dataset.tooltip=subtitle;$('#page-subtitle').textContent=subtitle;}
-function activate(view){if(state.view==='organizer'&&view!=='organizer')organizerUI.suspend();state.view=view;state.id=null;state.selected=null;state.token++;$('#notice').hidden=true;for(const item of document.querySelectorAll('[data-nav]')){item.classList.toggle('active',item.dataset.nav===view);if(item.dataset.nav===view)item.setAttribute('aria-current','page');else item.removeAttribute('aria-current');}$('#toolbar').hidden=!['library','watching'].includes(view);$('#scan-subtitles').hidden=!['library','watching'].includes(view);$('#filters').hidden=!['library','watching'].includes(view);$('#content').scrollTop=0;render();}
+function activate(view){if(state.view==='discovery')discoveryUI.leave();if(state.view==='organizer'&&view!=='organizer')organizerUI.suspend();state.view=view;state.id=null;state.selected=null;state.token++;$('#notice').hidden=true;for(const item of document.querySelectorAll('[data-nav]')){item.classList.toggle('active',item.dataset.nav===view);if(item.dataset.nav===view)item.setAttribute('aria-current','page');else item.removeAttribute('aria-current');}$('#toolbar').hidden=view!=='library';$('#scan-subtitles').hidden=view!=='library';$('#filters').hidden=view!=='library';$('#content').scrollTop=0;render();}
 const organizerUI=require('./js/organizer-desktop.cjs').create({ipc,node,button,notice,setHeader,container:()=>$('#content'),isActive:()=>state.view==='organizer'});
+const downloadUI=require('./js/qbit-ui.cjs').downloads({ipc,node,button,notice,setHeader,container:()=>$('#content'),
+  openSettings:()=>activate('settings'),openTask:id=>{activate('organizer');return organizerUI.openTask(id);}});
+const resourceUI=require('./js/resource-search-ui.cjs').create({ipc,node,button,shell,notice,setHeader,container:()=>$('#content'),downloadSettings:downloadUI.settings});
+const discoveryUI=require('./js/discovery-ui.cjs').create({ipc,node,button,openDetail,openExternal:url=>shell.openExternal(url),setHeader,container:()=>$('#content'),works,catalogue:episodeCatalogue,
+  restart:()=>{const app=require('@electron/remote').app;app.relaunch();app.quit();},
+  find:(row,names)=>findResources({Name:row.cn||row.name},names)});
+async function findResources(work,discoveryInfo){
+  const token=state.token;
+  let info=discoveryInfo||{};
+  if(work.bgmID)try{info=await request('https://api.bgm.tv/v0/subjects/'+work.bgmID);}catch{}
+  if(token!==state.token||(!discoveryInfo&&state.id!==work.id))return;
+  const original=info.name || (!info.name_cn ? work.Name : '');
+  const cn=info.name_cn || (!info.name && !/[ぁ-ヿ]/u.test(work.Name) && /[一-龯]/u.test(work.Name) ? work.Name : '');
+  const fields=Array.isArray(info.infobox)?info.infobox:[];
+  const romanField=fields.find(item=>/^(罗马音|羅馬音|罗马字|羅馬字|ローマ字|romaji)$/i.test(item.key));
+  let roman=typeof romanField?.value==='string' ? romanField.value : romanField?.value?.[0]?.v || '';
+  const japanese=/[ぁ-ヿ]/u.test(original) || fields.some(item=>/国家|地区|製作国|制片国/.test(item.key) && /日本|Japan/i.test(JSON.stringify(item.value)));
+  if(!roman && japanese && /[ぁ-ヿ一-龯]/u.test(original)){
+    try{roman=await ipc.invoke('resources:romaji',original);}catch{}
+  }
+  if(token!==state.token||(!discoveryInfo&&state.id!==work.id))return;
+  const values=[['原名',original],['中文名',cn],['罗马音',roman]].filter((entry,i,all)=>entry[1]&&all.findIndex(e=>e[1]===entry[1])===i);
+  resourceUI.preset(values);activate('resources');
+  if(discoveryInfo)$('#content .resource-search').prepend(button('返回发现',()=>activate('discovery'),'button quiet small'));
+}
+function openWorkRecords(work){
+  organizerUI.findWork(work);activate('organizer');
+  organizerUI.refresh().catch(error=>notice('读取整理记录失败：'+error.message));
+}
 const subtitlePanel=require('./js/subtitle-panel.cjs').create({ipc,node,button,notice,refresh:read});
-function render(){if(state.view!=='organizer')organizerUI.suspend();if(state.view!=='detail')setDetailBackdrop(null);if(!['library','watching'].includes(state.view))disposeLibrary();document.body.dataset.view=state.view;if(state.view==='organizer')organizerUI.render();else if(state.view==='detail')renderDetail();else if(state.view==='issues')renderIssues();else if(state.view==='settings')renderSettings();else renderLibrary();}
+function scrollContentTo(element){if(element){const viewport=$('#content');viewport.scrollTop+=element.getBoundingClientRect().top-viewport.getBoundingClientRect().top;}}
+const subtitleSearch=require('./js/subtitle-search-page.cjs').create({ipc,node,button,notice,setHeader,container:()=>$('#content'),works,
+  returnToSearch:()=>activate('subtitle-search'),
+  openSettings:()=>{activate('settings');scrollContentTo($('#subtitle-api-settings'));},
+  openWork:work=>openDetail(work.id),
+  match:(work,files)=>{subtitlePanel.prepare(work,files);openDetail(work.id);switchDetailTab('subtitles');}});
+function findSubtitles(work){subtitleSearch.preset(work);activate('subtitle-search');}
+function render(){if(state.view!=='organizer')organizerUI.suspend();if(state.view!=='detail')setDetailBackdrop(null);if(state.view!=='library')disposeLibrary();document.body.dataset.view=state.view;$('#refresh').hidden=['resources','downloads','discovery','subtitle-search'].includes(state.view);if(state.view==='discovery')discoveryUI.render();else if(state.view==='resources')resourceUI.render();else if(state.view==='subtitle-search')subtitleSearch.render();else if(state.view==='downloads')downloadUI.render();else if(state.view==='organizer')organizerUI.render();else if(state.view==='detail')renderDetail();else if(state.view==='issues')renderIssues();else if(state.view==='settings')renderSettings();else renderLibrary();}
 function renderLibrary({preserveScroll=false}={}){
   const viewport=$('#content'),scroll=preserveScroll?viewport.scrollTop:0;
-  const all=works();const watching=state.view==='watching';setHeader(watching?'正在观看':'媒体库',watching?'把正在追的故事接着看下去。':all.length+' 部本地番剧，章节、特典与观看进度集中管理。');
-  const list=all.filter(w=>{const p=progress(w);if(watching&&!(p.watched>0&&p.watched<p.total))return false;if(state.query&&!String(w.Name).toLocaleLowerCase().includes(state.query.toLocaleLowerCase()))return false;if(state.year&&String(w.Year)!==state.year)return false;if(state.type&&mediaType(w)!==state.type)return false;if(state.subtitle&&(w.SubtitleSummary?.status||'unknown')!==state.subtitle)return false;return state.filter==='unwatched'?p.watched===0:state.filter==='watching'?p.watched>0&&p.watched<p.total:state.filter==='watched'?p.total>0&&p.watched===p.total:state.filter==='extras'?resources(w).length>0:true;});
+  const all=works();setHeader('媒体库',all.length+' 部本地番剧，章节、特典与观看进度集中管理。');
+  const list=all.filter(w=>{const p=progress(w);if(state.query&&!String(w.Name).toLocaleLowerCase().includes(state.query.toLocaleLowerCase()))return false;if(state.year&&String(w.Year)!==state.year)return false;if(state.type&&mediaType(w)!==state.type)return false;if(state.subtitle&&(w.SubtitleSummary?.status||'unknown')!==state.subtitle)return false;return state.filter==='unwatched'?p.watched===0:state.filter==='watching'?p.watched>0&&p.watched<p.total:state.filter==='watched'?p.total>0&&p.watched===p.total:state.filter==='extras'?resources(w).length>0:true;});
   list.sort((a,b)=>state.sort==='year'?compareAirDates(a,b):state.sort==='score'?Number(b.Score)-Number(a.Score):state.sort==='progress'?progress(b).percent-progress(a).percent:String(a.Name).localeCompare(b.Name,'zh-CN',{numeric:true}));
   const filters=$('#filters');if(!filters.childElementCount)for(const [id,label]of [['all','全部'],['unwatched','未看'],['watching','在看'],['watched','已看'],['extras','有特典']]){const chip=button(label,()=>{state.filter=id;renderLibrary();},'filter-chip');chip.dataset.filter=id;filters.appendChild(chip);}if(!filters.querySelector('.filter-total'))filters.appendChild(node('span','filter-total'));filters.querySelector('.filter-total').textContent=list.length+' 部作品';for(const chip of filters.querySelectorAll('.filter-chip')){const active=chip.dataset.filter===state.filter;chip.classList.toggle('active',active);chip.setAttribute('aria-pressed',String(active));}
   $('#poster-size-control').hidden=state.mode!=='grid';
@@ -133,7 +171,7 @@ function posterCard(work){
     const scroll=$('#content').scrollTop;
     const changes=Object.fromEntries(slots(work).map(([key])=>['EPDetails.'+key+'.Condition',complete?'Unwatched':'Watched']));
     if(await edit(work,changes)){
-      if(['library','watching'].includes(state.view)){renderLibrary({preserveScroll:true});}
+      if(state.view==='library'){renderLibrary({preserveScroll:true});}
     }else if(watched.isConnected)watched.disabled=false;
   },'poster-watched'+(complete?' complete':''));
   watched.disabled=!p.total;
@@ -146,8 +184,14 @@ function posterCard(work){
 }
 
 function empty(container,title,description){const el=node('div','empty-state');el.append(node('strong','',title),node('div','',description));container.appendChild(el);}
-function returnToLibrary(){activate('library');$('#content').scrollTop=state.libraryScroll||0;}
-function openDetail(id){if(['library','watching'].includes(state.view))state.libraryScroll=$('#content').scrollTop;state.id=id;state.view='detail';state.tab='chapters';state.selected=null;state.specialEpisodeId=null;state.token++;$('#toolbar').hidden=true;$('#scan-subtitles').hidden=true;$('#filters').hidden=true;$('#notice').hidden=true;$('#content').scrollTop=0;renderDetail();}
+function returnFromDetail(){if(state.detailOrigin==='discovery'){activate('discovery');return;}activate('library');$('#content').scrollTop=state.libraryScroll||0;}
+function openDetail(id){
+  if(state.view!=='detail')state.detailOrigin=state.view==='discovery'?'discovery':'library';
+  if(state.view==='discovery')discoveryUI.leave();
+  const back=$('#library-back'),label=state.detailOrigin==='discovery'?'返回发现':'返回媒体库';
+  chromeUI.decorateButton(back,label);back.dataset.tooltip=label;
+  $('#refresh').hidden=false;
+  if(state.view==='library')state.libraryScroll=$('#content').scrollTop;state.id=id;state.view='detail';state.tab='chapters';state.selected=null;state.specialEpisodeId=null;state.token++;$('#toolbar').hidden=true;$('#scan-subtitles').hidden=true;$('#filters').hidden=true;$('#notice').hidden=true;$('#content').scrollTop=0;renderDetail();}
 function activeWork(){return state.data[state.id]?{id:state.id,...state.data[state.id]}:null;}
 function renderDetail({updatePanel=true}={}){
   const existing=$('.detail-hero');
@@ -158,7 +202,7 @@ function renderDetail({updatePanel=true}={}){
   setDetailBackdrop(work);
   const p=progress(work);setHeader('番剧详情','管理本地章节与文件','LIBRARY / DETAILS');const content=$('#content');const scroll=content.scrollTop;content.replaceChildren();
   const hero=node('section','detail-hero');hero.dataset.workId=state.id;hero.appendChild(image(work,'detail-cover'));const info=node('div','detail-info');info.appendChild(node('h2','',work.Name));const alias=node('div','alias','');alias.id='detail-alias';info.appendChild(alias);const meta=node('div','detail-meta');meta.append(node('span','',work.Type||'动画'),node('span','',airDateLabel(work)),node('span','',p.total+' 个正片章节'),node('span','',resources(work).length+' 个特典文件'));if(Number(work.Score)>0)meta.appendChild(node('span','rating','★ '+work.Score));if(Number(work.Rank)>0)meta.appendChild(node('span','bangumi-rank','Rank #'+work.Rank));info.appendChild(meta);const staff=node('div','detail-staff');staff.hidden=true;info.appendChild(staff);
-  const actions=node('div','detail-actions');actions.append(button('打开文件夹',()=>openFile(work.URL),'button primary small'),workOriginalFolderButton(work),button('Bangumi ↗',()=>shell.openExternal('https://bgm.tv/subject/'+work.bgmID)),button('编辑信息',()=>renderEdit(activeWork())),button('导入字幕',()=>switchDetailTab('subtitles')));info.appendChild(actions);const line=node('div','detail-progress'),bar=document.createElement('progress');bar.max=Math.max(p.total,1);bar.value=p.watched;line.append(bar,node('span','',p.watched+' / '+p.total+' 集已看 · '+p.percent+'%'));info.appendChild(line);hero.appendChild(info);content.appendChild(hero);
+  const actions=node('div','detail-actions');actions.append(button('找资源',()=>findResources(work)),button('找字幕',()=>findSubtitles(work)),button('整理记录',()=>openWorkRecords(work)),button('打开文件夹',()=>openFile(work.URL),'button primary small'),workOriginalFolderButton(work),button('Bangumi ↗',()=>shell.openExternal('https://bgm.tv/subject/'+work.bgmID)),button('编辑信息',()=>renderEdit(activeWork())),button('导入字幕',()=>switchDetailTab('subtitles')));info.appendChild(actions);const line=node('div','detail-progress'),bar=document.createElement('progress');bar.max=Math.max(p.total,1);bar.value=p.watched;line.append(bar,node('span','',p.watched+' / '+p.total+' 集已看 · '+p.percent+'%'));info.appendChild(line);hero.appendChild(info);content.appendChild(hero);
   const relations=node('div','relation-strip');relations.hidden=true;content.appendChild(relations);
   const tabs=node('div','detail-tabs');for(const [id,label,count]of [['chapters','章节',p.total],['specials','特别章节','…'],['extras','特典文件',resources(work).length],['invalid','异常文件',invalid(work).length],['subtitles','字幕',work.SubtitleSummary?.covered||0]]){const tab=button(label,()=>switchDetailTab(id),'detail-tab'+(state.tab===id?' active':''));tab.dataset.detailTab=id;tab.appendChild(node('span','',count));tabs.appendChild(tab);}content.appendChild(tabs);
   const panel=node('div','detail-panel');content.appendChild(panel);
@@ -252,7 +296,7 @@ function renderChapters(panel,work){
       if(key&&episode.state==='mapped'){const tile=localCard(key,work.EPDetails[key],title,episode,true);grid.appendChild(tile);continue;}
       const status={unmapped:'未映射',unavailable:'不可用',upcoming:'未播出',mapped:'已映射'}[episode.state];
       const actions=episodeActions({file:episode.usable[0]?.path,link:'https://bgm.tv/ep/'+episode.id,watched:false,onToggle:()=>{},onThrough:()=>{},throughTitle:'绑定本地正片后可更新观看进度'},'chapter-actions');
-      actions.children[2].disabled=true;actions.children[3].disabled=true;
+      actions.children[3].disabled=true;actions.children[4].disabled=true;
       const tile=chapterCard({label:'EP '+(episode.sort??episode.ep),title,status,warning:episode.state==='unmapped'||episode.state==='unavailable',
         durationEpisode:episode,durationFile:episode.usable[0]?.path,work,selected:state.selected==='catalog:'+episode.id,onSelect:()=>{selectChapter(panel,'catalog:'+episode.id);const box=episodeFilePanel({heading:'EP '+(episode.sort??episode.ep)+' · 本地文件',title,episodeId:episode.id,actions:node('div'),files:episode.files.map(file=>({path:file.path,description:file.availability&&file.availability!=='available'?'已映射，文件状态：'+file.availability:'已映射本地文件'})),emptyMessage:episode.state==='upcoming'?'此章节尚未播出。':'未映射本地文件；请检查是否缺集，或在资源整理中核对章节绑定。',work});updateChapterDetail(panel,box);},actions});
       tile.dataset.chapterKey='catalog:'+episode.id;
@@ -337,14 +381,15 @@ function chapterCard({label,title,status='',watched=false,selected=false,warning
   }
   return tile;
 }
-function episodeActions({file,link,watched,onToggle,onThrough,throughTitle},cls){
-  const actions=node('div',cls),play=button('▶ 播放',()=>openFile(file),'chapter-action play');play.disabled=!file;play.title=file?'使用系统播放器打开本集':'未映射可用的本地文件';
+function episodeActions({file,link,watched,onToggle,onThrough,throughTitle,onPlay},cls){
+  const actions=node('div',cls),play=button('▶ 播放',()=>onPlay?onPlay():openFile(file),'chapter-action play');play.disabled=!file;play.title=file?(onPlay?'使用系统播放器播放本集及同字幕组正片，从当前集开始循环排列':'使用系统播放器打开本集'):'未映射可用的本地文件';
+  const appreciate=button('鉴赏',()=>cadensviewUI.open(activeWork(),file),'chapter-action');appreciate.disabled=!file;appreciate.title=file?'使用 CadensView 鉴赏当前本地版本':'未映射可用的本地文件';
   const comments=button('评论 ↗',()=>shell.openExternal(link),'chapter-action');comments.disabled=!link;comments.title=link?'在浏览器打开本集 Bangumi 评论':'此集尚未绑定 Bangumi 单集';
   const seen=button(watched?'撤销已看':'看过',onToggle,'chapter-action'),through=button('看到这里',onThrough,'chapter-action');through.title=throughTitle;
-  actions.append(play,comments,seen,through);return actions;
+  actions.append(play,appreciate,comments,seen,through);return actions;
 }
 function chapterActions(work,key,cls){
-  const slot=work.EPDetails[key];return episodeActions({file:episodePath(work,slot),link:slot.Collection?'https://bgm.tv/subject/'+work.bgmID:episodeLink(slot),watched:slot.Condition==='Watched',
+  const slot=work.EPDetails[key];return episodeActions({file:episodePath(work,slot),onPlay:()=>playEpisode(work,episodePath(work,slot)),link:slot.Collection?'https://bgm.tv/subject/'+work.bgmID:episodeLink(slot),watched:slot.Condition==='Watched',
     onToggle:async()=>{if(await edit(work,{['EPDetails.'+key+'.Condition']:activeWork()?.EPDetails?.[key]?.Condition==='Watched'?'Unwatched':'Watched'}))renderDetail();},
     onThrough:async()=>{if(await edit(work,watchedThrough(activeWork(),key)))renderDetail();},throughTitle:'将本集及之前的正片全部标为看过，后面的集数保持原样'},cls);
 }
@@ -411,10 +456,13 @@ function workOriginalFolderButton(work){
   for(const file of files){const source=sourcePath(work,file);if(source){const folder=path.dirname(source),key=path.resolve(folder).toLowerCase();if(!folders.has(key))folders.set(key,{folder,file});}}
   if(folders.size===1)return originalFolderButton(work,[...folders.values()][0].file);
   const control=button('打开原视频文件夹',()=>{
-    const dialog=node('dialog','settings-card');dialog.append(node('h3','','选择原视频文件夹'));
+    const dialog=node('dialog','settings-card source-folder-dialog'),title=node('h3','','选择原视频文件夹');title.id='source-folder-dialog-title';dialog.setAttribute('aria-labelledby',title.id);dialog.append(title);
     const list=node('div','collection-choices source-folder-choices');
-    for(const {folder,file}of folders.values()){const choice=originalFolderButton(work,file);choice.textContent=folder;choice.classList.add('source-folder-choice');const open=choice.onclick;choice.onclick=async()=>{await open();dialog.close();};list.appendChild(choice);}
-    dialog.append(list,button('取消',()=>dialog.close(),'button quiet small'));dialog.onclose=()=>dialog.remove();document.body.appendChild(dialog);dialog.showModal();
+    for(const {folder,file}of folders.values()){
+      const choice=button(folder,async()=>{try{await ipc.invoke('library:explorer',{id:work.id,path:file,original:true});dialog.close();}catch(error){notice(error.message);}},'button quiet source-folder-choice');choice.title=folder;list.appendChild(choice);
+    }
+    const actions=node('div','source-folder-actions');actions.append(button('取消',()=>dialog.close(),'button quiet small'));
+    dialog.append(list,actions);dialog.onclose=()=>dialog.remove();document.body.appendChild(dialog);dialog.showModal();
   },'button quiet small');
   control.disabled=!folders.size;control.title=folders.size?'选择整理前的来源目录':'没有记录原视频的来源路径';return control;
 }
@@ -432,9 +480,10 @@ function fileRow(file,description,work=activeWork()){
   defaultGroup.disabled=!group||isDefault;defaultGroup.setAttribute('aria-pressed',String(isDefault));
   defaultGroup.title=group?(isDefault?'默认字幕组：':'设为默认字幕组：')+group:'未识别到字幕组，无法设为默认';
   actions.appendChild(defaultGroup);
+  if(/\.(mkv|mp4|avi|m2ts|ts|mov|wmv|webm|flv|mpg|mpeg|m4v)$/i.test(file))actions.appendChild(button('鉴赏',()=>cadensviewUI.open(work,file),'button quiet small'));
   remove.disabled=!work?.RenameBinding?.files?.some(row=>path.resolve(row.path).toLowerCase()===path.resolve(file).toLowerCase());remove.title='确认后移入系统回收站';
   if(work?.bgmID&&!remove.disabled)actions.appendChild(button((slots(work).some(([,s])=>s.Collection&&(s.Versions||[]).some(v=>path.resolve(v.path).toLowerCase()===path.resolve(file).toLowerCase()))?'合集设置 / 重命名':'设为合集'),()=>chooseCollection(work,file),'button quiet small'));
-  actions.append(button('打开',()=>openFile(file)),button('定位',()=>reveal(file),'button quiet small'),originalFolderButton(work,file),remove);row.append(label,actions);return row;
+  actions.append(button('打开',()=>/\.(mkv|mp4|avi|m2ts|ts|mov|wmv|webm|flv|mpg|mpeg|m4v)$/i.test(file)?playEpisode(work,file):openFile(file)),button('定位',()=>reveal(file),'button quiet small'),originalFolderButton(work,file),remove);row.append(label,actions);return row;
 }
 function renderResources(panel,work){const files=resources(work);const heading=node('div','section-heading');heading.append(node('h3','','特典文件'),node('small','',files.length+' 个文件'));panel.appendChild(heading);if(invalid(work).length)panel.appendChild(node('p','inline-note',invalid(work).length+' 个空文件或失效文件已排除，可在“异常文件”查看。'));if(!files.length){empty(panel,'没有有效的特典文件','SP、NCOP、NCED、CM 等均在此管理。');return;}const list=node('div','resource-list');for(const file of files)list.appendChild(fileRow(file.path,file.type===1?'SP / 特别篇':'特典'));panel.appendChild(list);}
 function renderInvalid(panel,work){
@@ -479,29 +528,36 @@ function renderSettings(){setHeader('偏好设置','简化浏览，保留你的�
   }
   content.appendChild(appearanceCard);
   const tools=node('section','settings-card');tools.append(node('h3','','资源整理'),node('p','','添加来源、审核方案、执行入库与整理设置集中在资源整理页面。'),button('打开资源整理',()=>activate('organizer'),'button quiet'));content.appendChild(tools);
+  resourceUI.settings(content);
+  cadensviewUI.settings(content);
+  subtitleSearch.settings(content);
   const storage=node('section','settings-card');storage.appendChild(node('h3','','数据存储'));content.appendChild(storage);ipc.invoke('library:storage').then(info=>{if(storage.isConnected){storage.append(node('p','','管理数据：'+info.directory),node('p','','整理记录：'+info.renameData));}}).catch(error=>notice(error.message));
   const health=node('section','settings-card');health.append(node('h3','','文件状态'),node('p','',works().reduce((n,w)=>n+invalid(w).length,0)+' 个异常文件已从有效列表排除；原文件保留。'),button('查看异常文件',()=>activate('issues'),'button quiet'));content.appendChild(health);
 }
 $('#poster-size').value=appearance.posterSize;$('#poster-size-value').textContent=appearance.posterSize+'px';$('#poster-size').oninput=event=>updatePosterSize(event.target.value);
-for(const item of document.querySelectorAll('[data-nav]'))item.onclick=()=>activate(item.dataset.nav);
-$('#library-back').onclick=returnToLibrary;
+for(const item of document.querySelectorAll('[data-nav]'))item.onclick=()=>{
+  resourceUI.clearNames();
+  if(item.dataset.nav==='subtitle-search')subtitleSearch.preset(null);
+  activate(item.dataset.nav);
+};
+$('#library-back').onclick=returnFromDetail;
 function jumpContent(bottom){smoothScroller.cancel();const viewport=$('#content');viewport.scrollTo({top:bottom?Math.max(0,viewport.scrollHeight-viewport.clientHeight):0,behavior:window.matchMedia('(prefers-reduced-motion: reduce)').matches?'auto':'smooth'});}
 $('#scroll-top').onclick=()=>jumpContent(false);
 $('#scroll-bottom').onclick=()=>jumpContent(true);
-let searchTimer;$('#search').oninput=event=>{state.query=event.target.value;clearTimeout(searchTimer);searchTimer=setTimeout(renderLibrary,120);};
+let searchTimer;$('#search').oninput=event=>{state.query=event.target.value;clearTimeout(searchTimer);searchTimer=setTimeout(()=>{if(state.view==='library')renderLibrary();},120);};
 $('#media-type').onchange=event=>{state.type=event.target.value;renderLibrary();};
 $('#subtitle-filter').onchange=event=>{state.subtitle=event.target.value;renderLibrary();};
 $('#scan-subtitles').onclick=async()=>{try{const progress=await ipc.invoke('subtitles:scan-all');showSubtitleProgress(progress);}catch(error){notice(error.message);}};
-function showSubtitleProgress(progress){const control=$('#scan-subtitles');control.disabled=progress.running;control.textContent=progress.running?'检测字幕 '+progress.done+'/'+progress.total:'检测全库字幕';if(!progress.running){read().then(()=>{if(['library','watching'].includes(state.view))renderLibrary({preserveScroll:true});}).catch(error=>notice(error.message));notice(progress.error||'字幕检测完成；画面内嵌仍需人工确认。');}}
+function showSubtitleProgress(progress){const control=$('#scan-subtitles');control.disabled=progress.running;control.textContent=progress.running?'检测字幕 '+progress.done+'/'+progress.total:'检测全库字幕';if(!progress.running){read().then(()=>{if(state.view==='library')renderLibrary({preserveScroll:true});}).catch(error=>notice(error.message));notice(progress.error||'字幕检测完成；画面内嵌仍需人工确认。');}}
 ipc.on('subtitles:progress',(_event,progress)=>showSubtitleProgress(progress));
 $('#year').onchange=event=>{state.year=event.target.value;renderLibrary();};$('#sort').value=state.sort;$('#sort').onchange=event=>{state.sort=event.target.value;localStorage.setItem('library-sort',state.sort);renderLibrary();};
 for(const mode of ['grid','list'])$('#'+mode+'-view').onclick=()=>{state.mode=mode;localStorage.setItem('library-view',mode);renderLibrary();};
 $('#refresh').onclick=async()=>{const control=$('#refresh');control.disabled=true;control.textContent='检查文件中…';try{if(state.view==='organizer'){await organizerUI.refresh();return;}const result=await ipc.invoke('library:recheck');adopt(result.data);apiCache.clear();catalogueCache.clear();state.token++;render();notice('已检查 '+result.report.checked+' 个文件'+(result.report.removed?'，清理 '+result.report.removed+' 条已删除的异常记录':'，文件状态已更新'));}catch(error){notice('刷新失败：'+error.message);}finally{control.disabled=false;control.textContent='↻ 刷新';}};
-document.addEventListener('keydown',event=>{if(event.ctrlKey&&event.key.toLowerCase()==='k'){event.preventDefault();if(!['library','watching'].includes(state.view))activate('library');$('#search').focus();}if(event.key==='Escape'&&state.view==='detail'&&!['INPUT','TEXTAREA'].includes(document.activeElement.tagName))returnToLibrary();});
+document.addEventListener('keydown',event=>{if(event.ctrlKey&&event.key.toLowerCase()==='k'){event.preventDefault();if(state.view==='discovery'){discoveryUI.focus();return;}if(state.view==='resources'){resourceUI.focus();return;}if(state.view==='subtitle-search'){subtitleSearch.focus();return;}if(state.view!=='library')activate('library');$('#search').focus();}if(event.key==='Escape'&&state.view==='detail'&&!['INPUT','TEXTAREA'].includes(document.activeElement.tagName))returnFromDetail();});
 let libraryUpdate;
-ipc.on('library:updated',()=>{clearTimeout(libraryUpdate);libraryUpdate=setTimeout(async()=>{try{await read();if(state.view==='detail')renderDetail({updatePanel:false});else if(['library','watching'].includes(state.view))renderLibrary({preserveScroll:true});else if(state.view==='issues')renderIssues();}catch(error){notice('更新媒体库失败：'+error.message);}},100);});
-ipc.on('MainWindow',(_event,action)=>{const view={OpenMediaPage:'library',OpenMainPage:'library',OpenWatchingPage:'watching',OpenOrganizerPage:'organizer',OpenSettingsPage:'settings'}[action];if(view)activate(view);});
+ipc.on('library:updated',()=>{clearTimeout(libraryUpdate);libraryUpdate=setTimeout(async()=>{try{await read();if(state.view==='detail')renderDetail({updatePanel:false});else if(state.view==='library')renderLibrary({preserveScroll:true});else if(state.view==='discovery')discoveryUI.refreshLibrary();else if(state.view==='issues')renderIssues();}catch(error){notice('更新媒体库失败：'+error.message);}},100);});
+ipc.on('MainWindow',(_event,action)=>{const view={OpenMediaPage:'library',OpenMainPage:'library',OpenDownloadsPage:'downloads',OpenOrganizerPage:'organizer',OpenSettingsPage:'settings'}[action];if(view)activate(view);});
 ipc.invoke('subtitles:progress').then(progress=>{if(progress.running)showSubtitleProgress(progress);}).catch(()=>{});
-read().then(()=>{render();window.requestIdleCallback(()=>organizerUI.preload(),{timeout:1500});}).catch(error=>{empty($('#content'),'无法读取媒体库',error.message);});
+read().then(()=>{render();window.requestIdleCallback(()=>{organizerUI.preload();discoveryUI.preload();},{timeout:1500});}).catch(error=>{empty($('#content'),'无法读取媒体库',error.message);});
 require('./js/desktop-performance.cjs').install({document,window});
 chromeUI.install({document,window});

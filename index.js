@@ -133,8 +133,8 @@ var trayMenuTemplate = [
       type: 'separator'
     }, //分隔线
     {
-      label: '正在观看',
-      click: function () {win.show();win.webContents.send('MainWindow','OpenWatchingPage');} //打开相应页面
+      label: '下载任务',
+      click: function () {win.show();win.webContents.send('MainWindow','OpenDownloadsPage');} //打开相应页面
     },
     {
       label: '媒体库',
@@ -255,7 +255,7 @@ app.setAsDefaultProtocolClient('bgmres');
 
 // Electron会在初始化完成并且准备好创建浏览器窗口时调用这个方法
 // 部分 API 在 ready 事件触发后才能使用。
-if (hasInstanceLock) app.whenReady().then(async () => { const linked = await require('./js/rename-binding-main.cjs').start({ipcMain, app, sysdata, Datastore: require('nedb')}); createWindow(); linked.hydrate().catch(error => console.error('Metadata hydration failed:', error.message)); }).catch(error => { dialog.showErrorBox('重命名产物绑定失败', error.message); app.quit(); })
+if (hasInstanceLock) app.whenReady().then(async () => { const linked = await require('./js/rename-binding-main.cjs').start({ipcMain, app, sysdata, snapshotStore:new Store({name:'discovery-cache'}), Datastore: require('nedb')}); require('./js/resource-search-main.cjs').register({ipcMain,app,sysdata,organizer:linked.organizer}); require('./js/subtitle-sources-main.cjs').register({ipcMain,app,sysdata}); createWindow(); linked.hydrate().catch(error => console.error('Metadata hydration failed:', error.message)); }).catch(error => { dialog.showErrorBox('重命名产物绑定失败', error.message); app.quit(); })
 
 //当所有窗口都被关闭后退出
 app.on('window-all-closed', () => {

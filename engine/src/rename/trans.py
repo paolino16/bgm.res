@@ -30,7 +30,14 @@ class Trans:
                    for source, target in self.R.items()
                    if self.mode == '链接' and self._should_use_mirror_link(source, target)]
         try:
-            videos = [p for p in expected_videos(self.source_root) if p not in self.skipped_sources] if self.source_root is not None else ()
+            selected = None
+            if 'source_files' in self.plan_context:
+                selected = set(map(Path, self.plan_context['source_files']))
+                if not selected.issuperset(self.R):
+                    raise ValueError('方案包含种子勾选范围外的文件')
+            videos = ()
+            if self.source_root is not None:
+                videos = [p for p in expected_videos(self.source_root, selected) if p not in self.skipped_sources]
             return inspect_plan(self.R, previous_targets, self.mode, videos=videos,
                                 mirrors=mirrors, reusable=self._is_reusable_existing_target,
                                 allow_empty=bool(self.skipped_sources))

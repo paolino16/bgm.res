@@ -72,6 +72,33 @@ def recognize(body):
     from .config.config_manager import cm
     task_id = body.get('id')
     task = read_task(task_id) if task_id else {}
+    files = task.get('source_files')
+    torrent = body.get('torrent')
+    if torrent:
+        import os
+        import re
+        from .rename.plan_resolution import load_plan
+        from .rename.utils import VIDEO_SUFFIX
+        if not re.fullmatch(r'[a-f0-9]{40}|[a-f0-9]{64}', torrent):
+            raise ValueError('种子哈希无效')
+        task_id = str(uuid.uuid5(uuid.NAMESPACE_URL, 'urn:btih:' + torrent))
+        if task_path(task_id).exists():
+            task = read_task(task_id)
+            plan = load_plan(task_id)
+            if plan or not body.get('retry'):
+                return {'task_id': task_id, 'error': None if plan else task.get('error') or '未生成识别方案'}
+        root = Path(body['path']).resolve(strict=True)
+        files = [Path(file).resolve(strict=True) for file in body['files']]
+        if not files or any(not p.is_relative_to(root) or not p.is_file() for p in files):
+            raise ValueError('种子文件已移动或不在保存目录内')
+        videos = [p for p in files if p.suffix.lower() in VIDEO_SUFFIX]
+        if not videos:
+            raise ValueError('勾选的文件中没有支持的视频')
+        path = videos[0] if len(videos) == 1 else Path(os.path.commonpath(videos))
+        task['path'] = str(path)
+        if path == root:
+            task['name'] = task.get('name') or body.get('title')
+
     allowed = {'name', 'year', 'season_id', 'subtitle_group', 'bgm_id', 'tmdb_id',
                'is_anime', 'is_movie', 'use_ai', 'skip_search', 'subject_ids'}
     task.update({k: v for k, v in body.get('changes', {}).items() if k in allowed})
@@ -87,7 +114,7 @@ def recognize(body):
     if not task_id and not str(body.get('path') or '').strip():
         raise ValueError('请选择源路径')
     from .rename import review_rollback
-    if task_id:
+    if body.get('id'):
         review_rollback.begin(task_id)
     old_ai = cm.get_config('ai_enabled')
     if task.get('use_ai') is False or len(selected) > 1:
@@ -96,7 +123,7 @@ def recognize(body):
         from .rename.source_scan import scan_scope
         from .rename.metadata_http import recognition_budget
         from .rename.recognition_progress import progress_scope
-        with reviewing(), scan_scope(), recognition_budget(), progress_scope(body.get('_progress')):
+        with reviewing(), scan_scope(files), recognition_budget(), progress_scope(body.get('_progress')):
             worker = Rename()
             worker.selected_subject_ids = selected
             result = worker.process(path, task.get('is_anime', True), task.get('is_movie'), task_id,
@@ -104,11 +131,14 @@ def recognize(body):
                 task.get('tmdb_id'), task.get('bgm_id'), bool(task.get('skip_search')))
     finally:
         try:
-            if task_id:
+            if body.get('id'):
                 review_rollback.seal(task_id)
         finally:
             if cm.get_config('ai_enabled') != old_ai:
                 cm.set_config('ai_enabled', old_ai)
+    if torrent:
+        plan = load_plan(task_id)
+        return {'task_id': task_id, 'error': None if plan else str(result or '未生成识别方案')}
     if isinstance(result, ExistingTasks):
         return {'message': result.message, 'reused': True}
     return {'message': result if isinstance(result, str) else '识别完成，请审核文件方案'}
@@ -117,6 +147,10 @@ def recognize(body):
 def perform(action, body):
     from .rename import plan_resolution as plans
     from .config.config_manager import cm, CONFIG_DEFAULT
+    if action == 'recognize-torrent':
+        if not body.get('torrent') or not isinstance(body.get('files'), list) or not body['files']:
+            raise ValueError('缺少种子哈希或下载文件清单')
+        return recognize(body)
     if action in {'recognize', 'retry'}:
         return recognize(body)
     if action == 'cancel-review':
@@ -140,10 +174,10 @@ def perform(action, body):
         return {**plans.desktop_review_plan(body['id']), 'ai_default_model': cm.get_config('plan_ai_model')}
     if action == 'delete-task-preview':
         from .rename.task_deletion import preview
-        return preview(body['id'], body.get('delete_outputs') is True)
+        return preview(body['id'], body.get('delete_outputs') is True, body.get('delete_sources') is True)
     if action == 'delete-task':
         from .rename.task_deletion import execute
-        return execute(body['id'], body['token'], body.get('delete_outputs') is True)
+        return execute(body['id'], body['token'], body.get('delete_outputs') is True, body.get('delete_sources') is True)
     if action == 'deepseek-plan':
         from .ai.bangumi_deepseek import review_plan
         return review_plan(body['id'], body['revision'], body['rows'], body.get('scope', 'unresolved'), progress=body.get('_progress'), model=body.get('model'))
@@ -171,6 +205,15 @@ def perform(action, body):
         from .rename.layout_migration import prepare_layout_migration
         prepare_layout_migration(body['id'])
         return plans.desktop_review_plan(body['id'])
+    if action == 'subtitle-versions':
+        from .rename.subtitle_manage import inventory, pending_cleanup
+        return {**inventory(body['ids'], body.get('videos')), 'pending': bool(pending_cleanup())}
+    if action == 'subtitle-manage':
+        from .rename.subtitle_manage import execute
+        return execute(body)
+    if action == 'subtitle-recover':
+        from .rename.subtitle_manage import recover
+        return recover()
     if action == 'subtitle-preview':
         from .rename.subtitle_import import preview_records, import_targets, subtitle_target
         from .utils.utils import get_record

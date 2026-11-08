@@ -15,7 +15,7 @@ from .cleaner import is_chinese_percentage_sufficient
 from .metadata_http import METADATA_TIMEOUT, metadata_session, MetadataRequestError
 from . import title_cache
 from .title_evidence import match_entries, reading, clean_evidence
-from ..utils.title_matching import normalize_title, title_score, season_hint, candidate_season, title_parts
+from ..utils.title_matching import identity_suffix, normalize_title, title_score, season_hint, candidate_season, title_parts
 
 
 class Search:
@@ -306,6 +306,13 @@ class Search:
                 if previous and previous['recall_evidence'][0]['match_score'] >= match_score:
                     continue
                 recalled[sid] = item
+        best_mapping = {}
+        for item in recalled.values():
+            evidence = item['recall_evidence'][0]
+            key = evidence.get('mal_id')
+            best_mapping[key] = max(best_mapping.get(key, 0), evidence['match_score'])
+        recalled = {sid: item for sid, item in recalled.items()
+                    if item['recall_evidence'][0]['match_score'] == best_mapping[item['recall_evidence'][0].get('mal_id')]}
         for item in recalled.values():
             self._rejected_tenrai_ids.discard(int(item['id']))
             title_cache.write('mapping', item['id'], {
@@ -313,18 +320,30 @@ class Search:
                 'aliases': item['aliases'], 'recall_evidence': item['recall_evidence']})
         return list(recalled.values())
 
+    def _special_intent_matches(self, subject, query):
+        titles = self._bangumi_titles(subject)
+        special = title_parts(query)[2]
+        return (special == any(title_parts(title)[2] for title in titles)
+                or any(title_parts(title)[2] == special and title_score([title], query)[0] == 5
+                       for title in titles))
+
     def _bangumi_compatible(self, subject, query, year):
         titles = self._bangumi_titles(subject)
         exact_original = (unicodedata.normalize('NFKC', str(subject.get('name') or '')).casefold().strip()
                           == unicodedata.normalize('NFKC', query).casefold().strip())
         if title_score(titles, query)[0] < 2:
             return False
-        if not exact_original and title_parts(query)[2] != any(title_parts(t)[2] for t in titles):
+        if not exact_original and not self._special_intent_matches(subject, query):
             return False
         if self.requested_platforms:
             platform = self._extract_bangumi_platform(subject).upper()
             if platform not in self.requested_platforms:
                 return False
+        if identity_suffix(query) and not any(identity_suffix(t) == identity_suffix(query) for t in titles):
+            return False
+        verified_native = any(e.get('verified') and e.get('match_score', 0) >= 7.5
+                              and title_score([e.get('title'), e.get('english')], query)[0] == 5
+                              for e in subject.get('recall_evidence', []))
         requested = season_hint(query)
         if requested is None:
             requested = self.requested_season
@@ -332,7 +351,7 @@ class Search:
         if requested is not None:
             return (season if season is not None else 1) == requested
         # An explicit year can intentionally select a sequel; popularity alone cannot.
-        return exact_original or season is None or season <= 1 or bool(year and self._extract_year(subject.get('date') or subject.get('air_date')) == year)
+        return verified_native or exact_original or any(str(t).casefold().strip() == query.casefold().strip() for t in titles) or season is None or season <= 1 or bool(year and self._extract_year(subject.get('date') or subject.get('air_date')) == year)
 
     def _build_bangumi_info(
         self,
@@ -476,8 +495,7 @@ class Search:
                     confident = False
                 # Special markers are identity evidence even when removed for
                 # lexical matching (Nichijou versus Nichijou OAD, for example).
-                specials = [title_parts(t)[2] for t in self._bangumi_titles(top)]
-                if title_parts(query)[2] != any(specials) and unicodedata.normalize('NFKC', query).casefold().strip() != unicodedata.normalize('NFKC', str(top.get('name') or '')).casefold().strip():
+                if not self._special_intent_matches(top, query) and unicodedata.normalize('NFKC', query).casefold().strip() != unicodedata.normalize('NFKC', str(top.get('name') or '')).casefold().strip():
                     confident = False
                 if year and not str(top.get('date') or '').startswith(str(year)):
                     confident = False
@@ -583,6 +601,26 @@ class Search:
         if not isinstance(data, list):
             data = []
         data = [item for item in data if isinstance(item, dict)]
+        native_prefix = re.match(r'[\u3040-\u30ff\u3400-\u9fff]{4,}', query)
+        if (native_prefix and len(native_prefix[0]) < len(query)
+                and not any(self._bangumi_compatible(item, query, year)
+                            and title_score(self._bangumi_titles(item), query)[0] == 5 for item in data)):
+            expanded = self._bangumi_request('/v0/search/subjects?limit=30', 'POST',
+                                             {**payload, 'keyword': native_prefix[0]})
+            if isinstance(expanded, dict):
+                known = {item.get('id') for item in data}
+                data.extend(item for item in expanded.get('data', []) if isinstance(item, dict)
+                            and item.get('id') and item['id'] not in known)
+        # Some indexes accept the series name but do not understand release Sxx syntax.
+        series_query = re.sub(r'(?i)\s+S\d{1,2}\b', '', query).strip()
+        if (series_query != query and not self.network_error
+                and not any(self._bangumi_compatible(item, query, year) for item in data)):
+            extra = self._bangumi_request('/v0/search/subjects?limit=30', 'POST',
+                                         {**payload, 'keyword': series_query})
+            known = {item.get('id') for item in data}
+            if isinstance(extra, dict):
+                data.extend(item for item in extra.get('data', []) if isinstance(item, dict)
+                            and item.get('id') and item['id'] not in known)
         for item in data:
             cached = title_cache.read('mapping', item.get('id'), 30 * 86400)
             if (isinstance(cached, dict) and cached.get('name') == item.get('name')
@@ -596,6 +634,19 @@ class Search:
                   (title_score(self._bangumi_titles(item), query)[0] < 2
                    or (self.requested_platforms and not item.get('platform')))]
         details = self._subject_details(list(dict.fromkeys(needed)))
+        if re.search(r'(?i)\b(?:OVA|OAD)\b', query) and not self.network_error:
+            seed = next((item for item in data[:5] if item.get('id')
+                         and title_score(self._bangumi_titles(item), query)[0] >= 2), None)
+            if seed and not any(self._bangumi_compatible(item, query, year)
+                                and title_score(self._bangumi_titles(item), query)[0] == 5 for item in data):
+                known = {item.get('id') for item in data}
+                linked = [item for item in self.get_bangumi_relations(seed['id'])
+                          if item.get('type') == 2 and item.get('relation') in {'番外篇', '前传'}
+                          and item.get('id') not in known]
+                for item in linked:
+                    detail = self.get_bangumi_subject_by_id(item['id'])
+                    if detail and self._extract_bangumi_platform(detail).upper() in {'OVA', 'OAD'}:
+                        data.append(detail)
         for index, item in enumerate(data[:5]):
             needs_platform = self.requested_platforms and not item.get('platform')
             if (title_score(self._bangumi_titles(item), query)[0] >= 2 and not needs_platform) or not item.get('id'):
@@ -686,6 +737,32 @@ class Search:
                         item['aliases'] = list(dict.fromkeys([*(item.get('aliases') or []), generated]))
                         item.setdefault('recall_evidence', []).append({
                             'source': 'reading', 'title': generated, 'verified': False, 'confident': False})
+        if (series_query != query and not self.network_error
+                and not any(self._bangumi_compatible(item, query, year) for item in data)):
+            known = {item.get('id') for item in data}
+            for seed in data[:3]:
+                for linked in self.get_bangumi_relations(seed['id']):
+                    if (linked.get('type') == 2 and linked.get('relation') in {'续集', '前传'}
+                            and linked.get('id') not in known):
+                        detail = self.get_bangumi_subject_by_id(linked['id'])
+                        if detail:
+                            data.append(detail)
+                            known.add(linked['id'])
+        needs_native_recall = (series_query != query or re.search(r'(?i)\b(?:OVA|OAD)\b|[()]', query))
+        if (needs_native_recall and data and not self.network_error
+                and not any(self._bangumi_compatible(item, query, year)
+                            and title_score(self._bangumi_titles(item), query)[0] == 5 for item in data)):
+            native_words = re.findall(r'[\u3040-\u30ff\u3400-\u9fffー]{4,}', str(data[0].get('name') or ''))
+            if native_words:
+                native_query = max(native_words, key=len)
+                if '(' in query:
+                    native_query = native_query[:6]
+                expanded = self._bangumi_request('/v0/search/subjects?limit=30', 'POST',
+                                                 {**payload, 'keyword': native_query})
+                if isinstance(expanded, dict):
+                    known = {item.get('id') for item in data}
+                    data.extend(item for item in expanded.get('data', []) if isinstance(item, dict)
+                                and item.get('id') and item['id'] not in known)
         self.last_error = detail_error
         data = sorted((item for item in data if isinstance(item, dict)),
                       key=lambda item: (int(self._bangumi_compatible(item, query, year)),

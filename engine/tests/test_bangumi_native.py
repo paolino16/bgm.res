@@ -54,6 +54,36 @@ class NativeTests(unittest.TestCase):
         path.write_bytes(name.encode())
         return path
 
+    def test_torrent_manifest_survives_review_and_duplicate_completion(self):
+        from src import integration_api as api
+        videos = [self.file('Show [01].mkv'), self.file('Show [02].mkv')]
+        subtitle = self.file('Show [01].chs.ass')
+        self.file('Show [03].mkv')
+        self.file('Show [01].eng.ass')
+        files = list(map(str, [*videos, subtitle]))
+        body = {'torrent': '1' * 40, 'path': str(self.source), 'files': files, 'title': 'Show'}
+        worker = process.Rename.__new__(process.Rename)
+        worker.ANIME_PATH = worker.ANIME_MOVIE_PATH = self.output
+        worker.ai_processor = Mock()
+        worker.ai_processor.ai_client.is_available.return_value = False
+        worker.search = Mock()
+        worker.search.get_bangumi_all_episodes.return_value = info()['bangumi_episodes']
+        worker.search.get_bangumi_relations.return_value = []
+        worker.resolve_task_type = Mock(return_value=('Show', 2025, ('Show', info(), True, False)))
+        with patch.object(process, 'Rename', return_value=worker), patch.object(api, 'TASK_PATH', self.root / 'task'):
+            result = api.recognize(body)
+            task_id = result['task_id']
+            self.assertIsNone(result['error'])
+            plan = plans.load_plan(task_id)
+            self.assertEqual(set(plan['mapping']), set(files))
+            checked = plans.check_saved_plan(task_id, plan['revision'], plan['rows'])
+            self.assertEqual(set(checked['mapping']), set(map(Path, files)))
+            self.assertFalse(checked['issues'])
+            self.assertEqual(api.recognize(body), result)
+            self.assertEqual(plans.load_plan(task_id)['revision'], plan['revision'])
+            worker.resolve_task_type.assert_called_once()
+            self.assertFalse(self.output.exists())
+
     def test_multiple_selected_subjects_require_explicit_file_assignment(self):
         from src.integration_api import reviewing
         first = self.file('TV/Show [01].mkv')

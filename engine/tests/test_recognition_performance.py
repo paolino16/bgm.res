@@ -1,4 +1,5 @@
 import json
+import os
 import tempfile
 import threading
 import time
@@ -21,6 +22,47 @@ def response(data):
 
 
 class RecognitionPerformanceTests(unittest.TestCase):
+    def test_desktop_pac_route_is_used_for_metadata_but_not_other_hosts(self):
+        routes = json.dumps({'api.bgm.tv': 'http://127.0.0.1:7890'})
+        with patch.dict(os.environ, {'BGM_METADATA_PROXIES': routes}), \
+             patch.object(requests.utils, 'get_environ_proxies', return_value={}), \
+             patch.object(http, '_CACHE', http.ResponseCache()), \
+             patch.object(requests.Session, 'request', return_value=response({'id': 1})) as send:
+            session = http.MetadataSession()
+            session.get('https://api.bgm.tv/v0/subjects/1')
+            self.assertEqual(send.call_args.kwargs['proxies'], {'https': 'http://127.0.0.1:7890'})
+            session.get('https://example.org/')
+            self.assertNotIn('proxies', send.call_args.kwargs)
+
+    def test_desktop_pac_preserves_explicit_proxy_env_and_session_settings(self):
+        with patch.dict(os.environ, {'BGM_METADATA_PROXIES': '{"api.bgm.tv":"http://desktop:7890"}'}), \
+             patch.object(http, '_CACHE', http.ResponseCache()), \
+             patch.object(requests.Session, 'request', return_value=response({'id': 1})) as send:
+            url = 'https://api.bgm.tv/v0/search/subjects'
+            for index, settings in enumerate(({'https': 'http://custom:80'}, {}, None)):
+                http.MetadataSession().get(url + f'?explicit={index}', proxies=settings)
+                self.assertEqual(send.call_args.kwargs['proxies'], settings)
+            with patch.object(requests.utils, 'get_environ_proxies', return_value={'https': 'http://env:80'}):
+                http.MetadataSession().get(url + '?env')
+                self.assertNotIn('proxies', send.call_args.kwargs)
+            with patch.object(requests.utils, 'get_environ_proxies', return_value={}), \
+                 patch.object(requests.utils, 'should_bypass_proxies', return_value=True):
+                http.MetadataSession().get(url + '?no-proxy')
+                self.assertNotIn('proxies', send.call_args.kwargs)
+            session = http.MetadataSession()
+            session.proxies = {'https': 'http://session:80'}
+            session.get(url + '?session')
+            self.assertNotIn('proxies', send.call_args.kwargs)
+
+    def test_invalid_desktop_routes_do_not_break_requests(self):
+        with patch.object(requests.utils, 'get_environ_proxies', return_value={}), \
+             patch.object(http, '_CACHE', http.ResponseCache()), \
+             patch.object(requests.Session, 'request', return_value=response({'id': 1})) as send:
+            for index, routes in enumerate(('invalid', '[]', 'null', '{"api.bgm.tv":"file:///bad"}')):
+                with patch.dict(os.environ, {'BGM_METADATA_PROXIES': routes}):
+                    http.MetadataSession().get(f'https://api.bgm.tv/v0/subjects/{index}')
+                    self.assertNotIn('proxies', send.call_args.kwargs)
+
     def test_file_title_removes_only_extension_and_version_keeps_title_season_year(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
@@ -36,6 +78,28 @@ class RecognitionPerformanceTests(unittest.TestCase):
                 candidates = worker.build_search_candidates(file)
                 self.assertIn((title, 0), candidates)
                 self.assertTrue(all('.mkv' not in name and '.mp4' not in name and '[v' not in name for name, _ in candidates))
+
+    def test_batch_directory_episode_range_is_removed_before_search(self):
+        with tempfile.TemporaryDirectory() as folder:
+            worker = Rename.__new__(Rename)
+            for name, title, year in (
+                ('[Kamigami] Mushishi 01-26 [BD x264 1920×1080 AAC(5.1ch) MKV Sub(CH,JP)]', 'Mushishi', 0),
+                ('Show S02 01-12 (2020)', 'Show S02', 2020),
+                ('86 01-12', '86', 0),
+            ):
+                source = Path(folder) / name
+                source.mkdir()
+                self.assertEqual(worker.build_search_candidates(source)[0], (title, year))
+                self.assertEqual(worker.build_search_candidates(source, 'Explicit 01-26'), [('Explicit 01-26', 0)])
+
+    def test_multilingual_movie_directory_separates_titles_year_and_platform(self):
+        source = Path('[冷番补完字幕组&白恋字幕组][机动战士高达 闪光的哈萨维][機動戦士ガンダム 閃光のハサウェイ]'
+                      '[Mobile Suit Gundam Hathaway][2021][Movie][2160p][内封简繁中字]')
+        worker = Rename.__new__(Rename)
+        self.assertEqual(worker.build_search_candidates(source), [
+            ('机动战士高达 闪光的哈萨维', 2021), ('機動戦士ガンダム 閃光のハサウェイ', 2021),
+            ('Mobile Suit Gundam Hathaway', 2021)])
+        self.assertIn('剧场版', worker.search_folder_context(source)[1])
 
     def test_network_failure_does_not_search_next_title_candidate(self):
         worker = Rename.__new__(Rename)

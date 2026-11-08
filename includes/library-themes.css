@@ -38,8 +38,6 @@ body[data-theme] .filter-chip { color:var(--muted); }
 body[data-theme] .filter-chip:hover { background:var(--hover);color:var(--text); }
 body[data-theme] .filter-chip.active { background:var(--accent-bg);color:var(--accent); }
 body[data-theme] :is(.filter-bar,.file-row,.settings-row,.organizer-disclosure,.relation-strip,.detail-tabs,.detail-hero,.subtitle-file,.subtitle-import-footer,.plan-review-row[open]>.plan-review-summary,.organizer-candidate-row) { border-color:var(--line); }
-body[data-theme] .content { scrollbar-color:var(--control-line) var(--bg); }
-body[data-theme] .content::-webkit-scrollbar-thumb { background:var(--control-line);border-color:var(--bg); }
 body[data-theme] :is(.notice,.subtitle-feedback.error,.chapter-missing-note,.job-failure) { background:var(--warning-bg);color:var(--warning);border-color:var(--warning-line); }
 body[data-theme] .organizer-error { color:var(--warning); }
 body[data-theme] :is(.organizer-job,.subtitle-feedback) { background:var(--accent-bg);color:var(--accent);border-color:var(--accent); }

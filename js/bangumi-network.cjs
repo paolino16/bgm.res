@@ -6,7 +6,7 @@ class BangumiNetwork{
     const parsed=new URL(url);if(parsed.protocol!=='https:'||!['api.bgm.tv','lain.bgm.tv','lain.bangumi.tv'].includes(parsed.hostname))throw Error('不支持的 Bangumi 地址');
     return this.limited(()=>new Promise((resolve,reject)=>{
       let done=false;const finish=(error,result)=>{if(done)return;done=true;clearTimeout(timer);error?reject(error):resolve(result);};
-      const request=this.net.request({url,method,redirect:'follow'});
+      const request=this.net.request({url,method,redirect:Object.keys(headers).some(name=>name.toLowerCase()==='authorization')?'error':'follow'});
       request.setHeader('User-Agent','JimHan/bgm.res/0.19.0 (https://github.com/JimHans/bgm.res)');
       for(const [name,value]of Object.entries(headers))if(!/^(host|connection|content-length|user-agent)$/i.test(name)&&value!=null)request.setHeader(name,String(value));
       const timer=setTimeout(()=>{request.abort();finish(Error('Bangumi 请求超时'));},15000);

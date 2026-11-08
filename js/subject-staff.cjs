@@ -4,7 +4,8 @@ const roles=[
   ['系列监督',['系列监督','系列导演','シリーズ監督','シリーズディレクター']],
   ['监督',['监督','导演','監督']],
   ['副监督',['副监督','副导演','副監督']],
-  ['系列构成',['系列构成','シリーズ構成']],
+  ['系列构成',['系列构成','系列構成','シリーズ構成']],
+  ['脚本',['脚本','腳本']],
   ['制作公司',['动画制作','動畫製作','アニメーション制作','制作公司']]
 ];
 function values(value){
@@ -14,7 +15,7 @@ function values(value){
 }
 function subjectStaff(subject,persons=[]){
   const infobox=Array.isArray(subject?.infobox)?subject.infobox:[];
-  return roles.flatMap(([label,aliases])=>{
+  const rows=roles.flatMap(([label,aliases])=>{
     const listed=[...new Set(infobox.filter(item=>aliases.includes(item.key)).flatMap(item=>values(item.value)))];
     const linked=(Array.isArray(persons)?persons:[]).filter(person=>aliases.includes(person.relation)&&values(person.name).length);
     const identities=new Map();
@@ -42,5 +43,6 @@ function subjectStaff(subject,persons=[]){
     for(const person of linked)if(!seen.has(person.name)){append(person.name);seen.add(person.name);}
     return parts.length?[{label,value:parts.map(part=>part.text).join(''),parts}]:[];
   });
+  return rows.some(row=>row.label==='系列构成')?rows.filter(row=>row.label!=='脚本'):rows;
 }
 module.exports={subjectStaff};

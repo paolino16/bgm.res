@@ -5,6 +5,7 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 import hashlib
 import json
+import os
 import threading
 import time
 from collections import OrderedDict
@@ -156,6 +157,17 @@ class MetadataSession(requests.Session):
         method = method.upper()
         host = urlsplit(url).hostname
         supported = host in {'api.themoviedb.org', 'api.bgm.tv', 'api.jikan.moe', 'api.tenrai.org'}
+        # The desktop resolves PAC through Chromium. Keep explicit requests/env
+        # proxy settings authoritative, and never apply a host's route elsewhere.
+        if supported and self.trust_env and 'proxies' not in kwargs and not self.proxies:
+            if (not requests.utils.get_environ_proxies(url)
+                    and not requests.utils.should_bypass_proxies(url, no_proxy=None)):
+                try:
+                    proxy = json.loads(os.environ.get('BGM_METADATA_PROXIES', '{}')).get(host)
+                    if proxy and urlsplit(proxy).scheme in {'http', 'https'}:
+                        kwargs['proxies'] = {urlsplit(url).scheme: proxy}
+                except (ValueError, TypeError, AttributeError):
+                    pass
         if not supported or method not in {'GET', 'POST'} or kwargs.get('stream'):
             kwargs['timeout'] = kwargs.get('timeout') or METADATA_TIMEOUT
             return super().request(method, url, **kwargs)

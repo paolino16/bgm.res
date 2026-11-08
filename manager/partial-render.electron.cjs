@@ -16,6 +16,52 @@ ipcMain.handle('organizer:pick',()=>['D:/fixture/subs']);ipcMain.handle('subtitl
 ipcMain.handle('library:organize',()=>{organizerReads++;return {tasks:[task],jobs:[]};});ipcMain.handle('media:duration',()=>({seconds:null}));ipcMain.handle('bangumi:request',()=>({status:503,error:'离线测试'}));
 ipcMain.handle('organizer:action',(_,body)=>{const id=String(++seq);if(body.action==='check'&&body.body.subtitle_group!==undefined)plan.context.subtitle_group=body.body.subtitle_group;const result=body.action==='plan'?plan:body.action==='check'?{issues:[],preview:[],token:'qa'}:body.action==='config'?{mode:'copy'}:body.action==='subtitle-preview'?{videos:report.files.map(f=>f.path),rows:[{source:'D:/fixture/01.ass',video:report.files[0].path,suffix:'chs'}]}:{};jobs.set(id,{id,state:'completed',action:body.action,result});return {job_id:id};});
 ipcMain.handle('organizer:job',(_,id)=>jobs.get(id));
+let discoveryAccount='',discoveryRevision=0,supportsRankFilters=false;
+ipcMain.handle('discovery:collectionIds',()=>({ids:[100,102]}));
+ipcMain.handle('discovery:titles',()=>null);
+ipcMain.handle('discovery:status',()=>({username:discoveryAccount,revision:discoveryRevision,supportsRankFilters,supportsTagSearch:supportsRankFilters,apiTagSorting:supportsRankFilters}));
+ipcMain.handle('discovery:login',()=>{discoveryAccount='qa';discoveryRevision++;});
+ipcMain.handle('discovery:logout',()=>{discoveryAccount='';discoveryRevision++;});
+ipcMain.handle('discovery:page',(_,q)=>{
+ if(q.year==='1901')return {total:0,count:0,rows:[]};
+ const total=q.mode==='collection'?1:48;
+ const rows=Array.from({length:Math.min(24,total-q.offset)},(_,i)=>({
+   id:100+q.offset+i,name:'星际牛仔',cn:q.mode==='collection'?'我的收藏 '+q.type:q.query?q.searchBy+' '+q.query:'星际牛仔 '+(q.offset+i+1),
+   date:'1998-04-03',episodes:26,rank:q.offset+i+1,platform:'TV',score:9.1
+ }));
+ return {rows,total,count:rows.length};
+});
+const queriedSources=[];
+ipcMain.handle('downloads:list',()=>({rows:[{hash:'fixture',title:'下载进度验证',stage:'downloading',state:'downloading',progress:0.625,speed:2097152,eta:750}]}));
+ipcMain.handle('resources:files',()=>({files:[{path:'Arcane/Season 2/01.mkv',size:536870912},{path:'Arcane/Subtitles/01.chs.ass',size:2048}],size:536872960}));
+ipcMain.handle('resources:romaji',()=> 'kaze no tani');
+ipcMain.handle('resources:settings',()=>({enabled:false,folder:'fixture'}));
+ipcMain.handle('resources:search',(_, {source,query,cursor})=>{
+ queriedSources.push(source);
+ if(query==='预取提示验证' && source==='knaben'){
+   const start=cursor?120:0,count=cursor?60:120;
+   const batch={rows:Array.from({length:count},(_,index)=>({source,title:'后台资源 '+(start+index),page:'https://knaben.org/search/index.php?q='+(start+index),hash:String(start+index)})),next:cursor?null:1};
+   return cursor?new Promise(resolve=>setTimeout(()=>resolve(batch),1500)):batch;
+ }
+ if(query==='来源均衡验证' && ['mikan','nyaa'].includes(source)){
+   const count=source==='mikan'?200:50,start=cursor?count:0;
+   const host=source==='mikan'?'mikan.sakuramoe.dev':'nyaa.si';
+   return {rows:Array.from({length:count},(_,index)=>({source,title:source+' 均衡 '+(start+index),page:'https://'+host+'/release/'+(start+index),hash:source+'-'+(start+index),date:cursor?'2099-01-01':source==='mikan'?'2026-01-01':'2025-01-01'})),next:cursor?null:1};
+ }
+ if(query==='预取验证' && source==='knaben'){
+   const start=cursor?120:0,count=cursor?60:120;
+   return {rows:Array.from({length:count},(_,index)=>({source,title:'预取资源 '+(start+index),page:'https://knaben.org/search/index.php?q='+(start+index),hash:String(start+index),date:cursor?'2099-01-01':'2026-01-01'})),next:cursor?null:1};
+ }
+ if(query==='显示分页验证' && source==='knaben')return {rows:Array.from({length:120},(_,index)=>({source,title:'分页资源 '+index,page:'https://knaben.org/search/index.php?q='+index,hash:String(index)})),next:null};
+ if(query==='分页验证' && source==='knaben'){
+   if(!cursor)return {rows:[],next:2};
+   const hit={source,title:'动画 '+cursor,page:'https://knaben.org/search/index.php?q='+cursor,hash:String(cursor)};
+   return {rows:[hit],next:cursor===2?3:null};
+ }
+ if(['显示分页验证','分页验证','预取验证','来源均衡验证','预取提示验证'].includes(query))return {rows:[],next:null};
+ const rows=['dmhy','mikan'].includes(source)?[{source,title:'[DBD-Raws] 英雄联盟：双城之战 第二季 / Arcane S02 [1080p]',page:source==='dmhy'?'https://share.dmhy.org/topics/view/1':'https://mikan.sakuramoe.dev/Home/Episode/1',hash:'123',size:'512 MiB'}]:[];
+ return {rows,next:null};
+});
 app.whenReady().then(async()=>{
  const w=new BrowserWindow({show:false,width:1360,height:860,webPreferences:{nodeIntegration:true,contextIsolation:false,backgroundThrottling:false,offscreen:true}}),errors=[],checks=[];
  require('@electron/remote/main').enable(w.webContents);
@@ -25,6 +71,131 @@ app.whenReady().then(async()=>{
  async function snapshot(name){await js('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');await pause();fs.writeFileSync(path.join(out,name+'.png'),(await w.webContents.capturePage()).toPNG());}
  const click=text=>js(`[...document.querySelectorAll('button')].find(b=>(b.getAttribute('aria-label')===${JSON.stringify(text)}||b.textContent===${JSON.stringify(text)})).click()`);
  await w.webContents.session.clearStorageData({storages:['localstorage']});await w.loadFile(path.join(root,'desktop.html'));await pause();
+ await js("document.querySelector('[data-nav=discovery]').click()");await pause();
+ await check('old backend cannot silently ignore rank filters',"document.querySelector('[aria-label=类型]').disabled && document.querySelector('.discovery').textContent.includes('重启应用')");
+ supportsRankFilters=true;await js("discoveryUI.render()");await pause();
+ await js("const picker=document.querySelector('[aria-label=搜索方式]');picker.value='tag';picker.dispatchEvent(new Event('change'));const f=document.querySelector('.discovery-controls input[type=search]');f.value='治愈，日常';f.form.requestSubmit()");await pause();
+ await check('tag search sends its mode and query',"document.querySelector('.discovery-name strong').textContent==='tag 治愈，日常'");
+ await check('API tag search defaults to match',"document.querySelector('.discovery-controls [aria-label=排序]').value==='match'");
+ await js("window.tagList=document.querySelector('.discovery-results');window.tagBlanks=0;window.listWatcher=new MutationObserver(()=>{if(!document.querySelector('.discovery-row'))window.tagBlanks++});listWatcher.observe(document.querySelector('#content'),{childList:true,subtree:true});const tagSort=document.querySelector('.discovery-controls [aria-label=排序]');tagSort.value='score';tagSort.dispatchEvent(new Event('change'))");await pause();
+ await check('changing tag sorting preserves the visible list',"listWatcher.disconnect();window.tagBlanks===0 && document.querySelector('.discovery-results')===window.tagList && document.querySelector('.discovery-controls [aria-label=排序]').value==='score'");
+ await js("const chooseYear=value=>{const e=document.querySelector('.discovery-controls [aria-label=年份]');e.value=value;e.dispatchEvent(new Event('change'));}; chooseYear('1901')");await pause();
+ await check('empty filter replaces previous results and pager',"document.querySelector('.discovery-results').textContent==='没有符合条件的动画' && !document.querySelector('.discovery-results nav,.discovery-row,.discovery-results[aria-busy]')");
+ await js("chooseYear('')");await pause();
+ await check('clearing empty filter restores matching titles',"document.querySelector('.discovery-name strong').textContent==='tag 治愈，日常'");
+ await js("const picker2=document.querySelector('[aria-label=搜索方式]');picker2.value='name';picker2.form.requestSubmit()");await pause();
+ await check('same query in title mode gets distinct results',"document.querySelector('.discovery-name strong').textContent==='name 治愈，日常'");
+ await js("const resetSearch=document.querySelector('.discovery-controls input[type=search]');resetSearch.value='';resetSearch.form.requestSubmit()");await pause();
+ await check('guest ranking and actual rank visible',"document.querySelectorAll('.discovery-row').length===24 && document.querySelector('.discovery-rank').textContent==='#1' && document.querySelector('.discovery-account').textContent.includes('游客')");
+ await snapshot('discovery-rank');
+ await check('rank titles link to their Bangumi subject',"document.querySelector('.discovery-name a').href==='https://bgm.tv/subject/100'");
+ await check('all four facet selectors present',"['来源','类型','地区','受众'].every(label=>document.querySelector('.discovery-facets select[aria-label='+label+']').options.length>1)");
+ await check('ranking filter panel contains all eight selectors and both flags',"document.querySelectorAll('.discovery-filter-panel select').length===8 && document.querySelectorAll('.discovery-filter-panel input[type=checkbox]').length===2");
+ await js("state.data.WorkSaveNo1={...state.data.WorkSaveNo1,bgmID:100};discoveryUI.refreshLibrary()");await pause();
+ await js("document.querySelector('.discovery-owned a').click()");await pause();
+ await check('owned link opens local work',"state.view==='detail' && state.id==='WorkSaveNo1' && document.querySelector('#library-back').getAttribute('aria-label')==='返回发现'");
+ await js("document.querySelector('#library-back').click()");await pause();
+ await check('return from local work keeps ranking and original link',"state.view==='discovery' && document.querySelector('.discovery-original').href==='https://bgm.tv/subject/100'");
+ await click('下一页');await pause();
+ await js("document.querySelector('.discovery-row button').click()");await pause();
+ await check('discovery opens resource draft without searching',"state.view==='resources' && document.querySelector('.resource-query input').value==='星际牛仔 25' && !document.querySelector('.resource-row')");
+ await click('返回发现');await pause();await check('return preserves ranking page',"document.querySelector('.discovery-rank').textContent==='#25'");
+ await click('我的收藏');await pause();await check('guest collections require login',"!document.querySelector('.discovery-row') && document.querySelector('.discovery').textContent.includes('登录后')");
+ await click('登录 Bangumi');await pause();await js("document.querySelector('.discovery-login input').value='qa';document.querySelector('.discovery-login').requestSubmit()");await pause();
+ await click('抛弃');await pause();await check('selected authenticated collection shown',"document.querySelector('.discovery-name strong').textContent==='我的收藏 5'");
+ w.setSize(760,800);await pause();await snapshot('discovery-collection-narrow');
+ await check('narrow discovery fits viewport',"document.querySelector('#content').scrollWidth<=document.querySelector('#content').clientWidth+2");
+ await click('排行榜');await pause();await js("document.querySelector('.discovery-filter-flags label:last-child input').click()");await pause();
+ await check('uncollected ranking excludes known IDs across page boundaries',"document.querySelectorAll('.discovery-row').length===24 && document.querySelector('.discovery-name a').href.endsWith('/101') && ![...document.querySelectorAll('.discovery-name a')].some(a=>a.href.endsWith('/102'))");
+ await click('我的收藏');await pause();
+ await click('退出登录');await pause();await check('logout removes collection rows',"!document.querySelector('.discovery-row')");
+ w.setSize(1360,860);
+ await js("document.querySelector('[data-nav=resources]').click();let resourceInput=document.querySelector('.resource-query input');resourceInput.value='arcane';resourceInput.dispatchEvent(new Event('input'));document.querySelector('.resource-query').requestSubmit()");await pause();
+ await check('resource search merges matching hashes and keeps source links',"document.querySelectorAll('.resource-row').length===1 && document.querySelectorAll('.resource-row a').length===2 && document.querySelector('.resource-row [aria-label=复制磁链]')!==null");
+ await snapshot('resource-search');w.setSize(760,800);await pause();await snapshot('resource-search-narrow');
+ await js("document.querySelector('.preview-link').click()");await pause();
+ await check('torrent preview lists paths and sizes on the search page',"document.querySelector('dialog[open] .torrent-files').children.length===2 && document.querySelector('.torrent-files').textContent.includes('Arcane/Subtitles/01.chs.ass') && document.querySelector('.torrent-files').textContent.includes('512 MiB')");
+ await snapshot('torrent-preview-narrow');
+ const previewBounds=await js("document.querySelector('dialog[open]').getBoundingClientRect().toJSON()");
+ async function clickPreviewPoint(x,y){
+   for(const type of ['mouseDown','mouseUp'])w.webContents.sendInputEvent({type,x:Math.round(x),y:Math.round(y),button:'left',clickCount:1});
+   await pause();
+ }
+ await clickPreviewPoint(previewBounds.left+9,previewBounds.top+18);
+ await check('preview padding keeps the file list open',"!!document.querySelector('.torrent-preview[open]')");
+ await clickPreviewPoint(previewBounds.left-8,previewBounds.top+18);
+ await check('clicking the backdrop closes the preview on the same results',"!document.querySelector('.torrent-preview') && resourceInput.value==='arcane'");
+ await click('下载任务');await pause();
+ await check('download monitor shows actual progress, speed and remaining time',"document.querySelector('.download-list').textContent.includes('62.5% · 2.0 MiB/s · 预估剩余 12分 30秒')");
+ await check('downloads owns a separate navigation page',"document.querySelector('[data-nav=downloads]').getAttribute('aria-current')==='page' && document.querySelector('#page-title').textContent==='下载任务' && !document.querySelector('.resource-query') && !document.querySelector('[data-nav=watching]')");
+ await snapshot('download-monitor-narrow');await click('资源搜索');await pause();
+ await js("resourceInput=document.querySelector('.resource-query input');void 0");
+ await check('returning from downloads retains the search',"resourceInput.value==='arcane' && document.querySelectorAll('.resource-row').length===1");
+ await check('resource search fits narrow viewport',"document.querySelector('#content').scrollWidth<=document.querySelector('#content').clientWidth+2");
+ await js("document.querySelector('.resource-filters button').click()");
+ await check('deselecting a source immediately updates merged releases',"document.querySelectorAll('.resource-row').length===1 && document.querySelectorAll('.resource-source').length===1 && document.querySelector('.resource-source').textContent==='蜜柑计划'");
+ await js("document.querySelector('.resource-filters button:nth-child(2)').click()");
+ await check('deselecting all origins hides the release',"!document.querySelector('.resource-row')");
+ await js("document.querySelector('.resource-filters button:nth-child(2)').click()");
+ await check('reselecting a searched source restores cached results',"document.querySelector('.resource-source').textContent==='蜜柑计划'");
+ assert.equal(queriedSources.length,5);
+ await js("document.querySelector('.resource-query').requestSubmit()");await pause();
+ assert.deepEqual(queriedSources.slice(5).sort(),['anibt','knaben','mikan','nyaa']);
+ await js("document.querySelector('.resource-filters button').click()");await pause();
+ assert.deepEqual(queriedSources.slice(9),['dmhy']);
+ await check('newly selected source joins the current search',"document.querySelectorAll('.resource-source').length===2");
+ await js("document.querySelector('.resource-filters button').click()");
+ await js("resourceInput.value='分页验证';resourceInput.dispatchEvent(new Event('input'));document.querySelector('.resource-query').requestSubmit()");await pause();
+ await check('filtered empty page continues to matching release',"document.querySelector('.resource-results').textContent.includes('动画 2')");
+ await click('下一页');await pause();
+ await check('remote continuation adds older releases and marks the end',"document.querySelector('.resource-results').textContent.includes('动画 3') && document.querySelector('.resource-results').lastElementChild.textContent==='没有更多结果了'");
+ await click('上一页');await pause();
+ await check('previous result page retains its rows',"document.querySelector('.resource-results').textContent.includes('动画 2') && !document.querySelector('.resource-results').textContent.includes('动画 3')");
+ await js("resourceInput.value='显示分页验证';resourceInput.dispatchEvent(new Event('input'));document.querySelector('.resource-query').requestSubmit()");await pause();
+ await check('display pagination limits each page to fifty releases',"document.querySelectorAll('.resource-row').length===50 && document.querySelector('.resource-title').textContent==='分页资源 0'");
+ const requestsBeforeLocalPage=queriedSources.length;
+ await click('下一页');await pause();
+ assert.equal(queriedSources.length,requestsBeforeLocalPage);
+ await check('second display page replaces the first without remote requests',"document.querySelectorAll('.resource-row').length===50 && document.querySelector('.resource-title').textContent==='分页资源 50' && document.querySelector('.resource-pagination').textContent.includes('第 2 页')");
+ await js("const pager=document.querySelector('.resource-pagination');pager.querySelector('input').value='3';pager.querySelector('form').requestSubmit()");await pause();
+ assert.equal(queriedSources.length,requestsBeforeLocalPage);
+ await check('resource results jump directly to a loaded page',"document.querySelectorAll('.resource-row').length===20 && document.querySelector('.resource-title').textContent==='分页资源 100' && document.querySelector('.resource-pagination input').max==='3'");
+ await js("document.querySelector('.resource-pagination [aria-label=\"第 2 页\"]').click()");await pause();
+ await js("document.querySelector('.resource-pagination').scrollIntoView({block:'end'})");await pause();await snapshot('resource-pagination-narrow');
+ await check('narrow result pagination fits the viewport',"document.querySelector('#content').scrollWidth<=document.querySelector('#content').clientWidth+2");
+ await js("resourceInput.value='预取验证';resourceInput.dispatchEvent(new Event('input'));document.querySelector('.resource-query').requestSubmit()");await pause();
+ const requestsBeforePrefetch=queriedSources.length;
+ await click('下一页');await pause();
+ assert.equal(queriedSources.length,requestsBeforePrefetch+1);
+ await check('short next-page buffer triggers prefetch without changing current rows',"document.querySelector('.resource-title').textContent==='预取资源 50' && document.querySelectorAll('.resource-row').length===50");
+ await click('下一页');await pause();
+ assert.equal(queriedSources.length,requestsBeforePrefetch+1);
+ await check('unpublished results use publication time when a page is opened',"document.querySelector('.resource-title').textContent==='预取资源 120' && document.querySelectorAll('.resource-row').length===50");
+ await click('上一页');await pause();
+ await check('earlier page order survives newer-dated prefetched releases',"document.querySelector('.resource-title').textContent==='预取资源 50'");
+ await js("resourceInput.value='来源均衡验证';resourceInput.dispatchEvent(new Event('input'));document.querySelector('.resource-query').requestSubmit()");await pause();
+ await click('下一页');await pause();
+ await check('later pages use publication time instead of source quotas',"[...document.querySelectorAll('.resource-source')].filter(link=>link.textContent==='蜜柑计划').length===50 && [...document.querySelectorAll('.resource-source')].filter(link=>link.textContent==='Nyaa').length===0");
+ const mixedSecondPage=await js("JSON.stringify([...document.querySelectorAll('.resource-title')].map(el=>el.textContent))");
+ const beforeSourceRefill=queriedSources.length;
+ await click('下一页');await pause();
+ assert.deepEqual(queriedSources.slice(beforeSourceRefill),[]);
+ await click('上一页');await pause();
+ assert.equal(await js("JSON.stringify([...document.querySelectorAll('.resource-title')].map(el=>el.textContent))"),mixedSecondPage);
+ await check('published result pages retain their chronological contents',"[...document.querySelectorAll('.resource-source')].filter(link=>link.textContent==='蜜柑计划').length===50");
+ await js("resourceInput.value='预取提示验证';resourceInput.dispatchEvent(new Event('input'));document.querySelector('.resource-query').requestSubmit()");await pause();
+ const beforeBackgroundFetch=queriedSources.length;
+ await click('下一页');await pause();
+ await check('background prefetch has its own status instead of searching again',"document.querySelector('.resource-status').textContent.includes('后台预取中') && !document.querySelector('.resource-status').textContent.includes('搜索中') && document.querySelector('.resource-title').textContent==='后台资源 50'");
+ await click('上一页');await pause();
+ await click('下一页');await pause();
+ assert.equal(queriedSources.length,beforeBackgroundFetch+1);
+ await check('cached page navigation remains available during a single prefetch',"document.querySelector('.resource-title').textContent==='后台资源 50'");
+ await js("activate('library');openDetail('WorkSaveNo1');apiCache.set('https://api.bgm.tv/v0/subjects/989',remember(Promise.resolve({name:'風の谷',name_cn:'风之谷'})));void findResources({...activeWork(),bgmID:989})");await pause();
+ await check('detail opens search with preferred names and saved sources',"document.querySelector('.resource-query input').value==='风之谷' && [...document.querySelector('.resource-query select').options].map(o=>o.value).join('|')==='风之谷|kaze no tani|風の谷' && document.querySelector('.resource-filters button').getAttribute('aria-pressed')==='false'");
+ await js("document.querySelector('[data-nav=resources]').click()");
+ await check('general search drops work name choices',"!document.querySelector('.resource-query select') && document.querySelector('.resource-query input').value==='风之谷'");
+ w.setSize(1360,860);await js("activate('library')");await pause();
  await js("window.gridBefore=document.querySelector('.virtual-poster-grid');window.cardBefore=document.querySelector('.work-card');document.querySelector('#sort').value='score';document.querySelector('#sort').dispatchEvent(new Event('change'))");
  await check('library keeps grid and unchanged cards',"gridBefore===document.querySelector('.virtual-poster-grid')&&cardBefore===document.querySelector('.work-card')");
  await js("document.querySelector('#content').scrollTop=800;window.scrollBefore=document.querySelector('#content').scrollTop");w.webContents.send('library:updated');await pause();
@@ -159,5 +330,17 @@ app.whenReady().then(async()=>{
  await js("activate('library');openDetail('WorkSaveNo1')");await pause();
  await check('next detail visit uses refreshed staff',"document.querySelector('.detail-staff-link').textContent==='更新后的制作公司'");
  w.setSize(1360,860);await pause();await snapshot('detail-cache-warm');
+ const jumpTasks=Array.from({length:75},(_,index)=>({...task,uuid:'jump-'+index,name:'分页任务 '+index,path:'D:/paging/'+index}));
+ const jumpPlan={...plan,rows:Array.from({length:85},(_,index)=>({...plan.rows[1],source:'D:/paging/video-'+index+'.mkv'}))};
+ await js(`window.jumpJobs=new Map();window.jumpSequence=0;window.jumpTasks=${JSON.stringify(jumpTasks)};window.jumpPlan=${JSON.stringify(jumpPlan)};window.jumpOrganizer=require('./js/organizer-desktop.cjs').create({node,button,notice,setHeader:()=>{},container:()=>document.querySelector('#content'),isActive:()=>true,ipc:{invoke:async(channel,body)=>{if(channel==='library:organize')return {tasks:jumpTasks,jobs:[]};if(channel==='organizer:action'){const id=String(++jumpSequence);jumpJobs.set(id,{state:'completed',result:body.action==='plan'?jumpPlan:{}});return {job_id:id};}if(channel==='organizer:job')return jumpJobs.get(body);throw Error('Unexpected pagination QA channel '+channel);}}});void 0`);
+ await js('jumpOrganizer.refresh()');await pause();
+ await js("const taskPager=document.querySelector('[aria-label=整理任务分页]');taskPager.querySelector('input').value='3';taskPager.querySelector('form').requestSubmit()");await pause();
+ await check('organizer tasks jump to page three',"document.querySelectorAll('.organizer-task').length===15 && document.querySelector('.organizer-task strong').textContent==='分页任务 60'");
+ await js("jumpOrganizer.openTask('jump-60')");await pause();
+ await js("const planPager=document.querySelector('[aria-label=方案文件分页]');planPager.querySelector('input').value='3';planPager.querySelector('form').requestSubmit()");await pause();
+ await check('plan files jump to page three',"document.querySelectorAll('.plan-row-source').length===5 && document.querySelector('[aria-label=方案文件分页] [aria-current=page]').textContent==='3'");
+ w.setSize(760,800);await pause();
+ await js("document.querySelector('[aria-label=方案文件分页]').scrollIntoView({block:'end'})");await pause();await snapshot('plan-page-jump-narrow');
+ await check('plan page jumping fits narrow windows',"document.querySelector('#content').scrollWidth<=document.querySelector('#content').clientWidth+2");
  assert.deepEqual(errors,[]);fs.writeFileSync(path.join(out,'report.json'),JSON.stringify({checks,errors,warmDetailMs:await js('warmDetailMs')},null,2));app.quit();
 }).catch(error=>{fs.writeFileSync(path.join(out,'failure.txt'),error.stack);app.exit(1);});

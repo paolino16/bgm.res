@@ -17,7 +17,7 @@ test('desktop edits are asynchronous, atomic, and cannot change bound file paths
   const filename=path.resolve('js/rename-binding-main.cjs');
   const source=await fs.readFile(filename,'utf8');
   const nativeRequire=createRequire(filename);const module={exports:{}};
-  vm.runInNewContext(source,{module,exports:module.exports,require:name=>name==='electron'?{net:{}}:nativeRequire(name),process:{env:{BGM_RES_DATA_DIR:directory}},__dirname:path.dirname(filename)});
+  vm.runInNewContext(source,{module,exports:module.exports,require:name=>name==='./cadensview-main.cjs'?{register(){}}:name==='electron'?{net:{}}:nativeRequire(name),process:{env:{BGM_RES_DATA_DIR:directory}},__dirname:path.dirname(filename)});
   const result=await module.exports.start({ipcMain:{handle:(name,fn)=>handlers.set(name,fn),on(){}},app:{getPath:()=>directory},sysdata:{set(){}},Datastore:DB});
   const read=()=>handlers.get('library:read')();const edit=changes=>handlers.get('library:edit')(null,{id:'WorkSaveNo1',changes});
   const snapshot=read();snapshot.WorkSaveNo1.Name='outside mutation';assert.equal(read().WorkSaveNo1.Name,'Show');
@@ -46,7 +46,7 @@ test('refresh rescans disk and removed empty files stay out of the anomaly list'
   const handlers=new Map();
   class DB{loadDatabase(cb){cb();}find(query,cb){cb(null,[]);}update(query,changes,options,cb){setImmediate(()=>cb(null));}}
   const filename=path.resolve('js/rename-binding-main.cjs'),nativeRequire=createRequire(filename),module={exports:{}};
-  vm.runInNewContext(await fs.readFile(filename,'utf8'),{module,exports:module.exports,require:name=>name==='electron'?{net:{}}:nativeRequire(name),process:{env:{BGM_RES_DATA_DIR:directory,BGM_RENAME_DATA:rename}},__dirname:path.dirname(filename)});
+  vm.runInNewContext(await fs.readFile(filename,'utf8'),{module,exports:module.exports,require:name=>name==='./cadensview-main.cjs'?{register(){}}:name==='electron'?{net:{}}:nativeRequire(name),process:{env:{BGM_RES_DATA_DIR:directory,BGM_RENAME_DATA:rename}},__dirname:path.dirname(filename)});
   await module.exports.start({ipcMain:{handle:(name,fn)=>handlers.set(name,fn),on(){}},app:{getPath:()=>directory},sysdata:{set(){}},Datastore:DB});
   assert.equal(handlers.get('library:read')().WorkSaveNo1.RenameBinding.invalidResources.length,1);
   await fs.unlink(extra);

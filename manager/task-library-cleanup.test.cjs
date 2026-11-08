@@ -33,6 +33,7 @@ test('completed deletion rebuilds a shared work without checking unrelated media
  class DB{loadDatabase(cb){cb();}find(q,cb){cb(null,[...groups].map(([key,data])=>({_id:key,data})));}update(q,v,o,cb){cb(null);}remove(q,o,cb){cb(null);}}
  const handlers=new Map(),checked=[];const filename=path.resolve('js/rename-binding-main.cjs'),nativeRequire=createRequire(filename),module={exports:{}};
  vm.runInNewContext(await fs.readFile(filename,'utf8'),{module,exports:module.exports,__dirname:path.dirname(filename),process:{env:{BGM_RES_DATA_DIR:directory}},require:name=>{
+  if(name==='./cadensview-main.cjs')return {register(){}};
   if(name==='electron')return {net:{},BrowserWindow:{getAllWindows:()=>[]}};
   if(name==='./file-health.cjs')return {inspect:async(group,previous)=>{checked.push(group.id);return nativeRequire(name).inspect(group,previous);}};
   if(name==='./rename-integration.cjs')return {create:({onReturn})=>({onReturn,request:async()=>({state:'completed',action:'delete-task',task_id:'one'})})};

@@ -118,7 +118,7 @@ def cleanup_empty_directories(roots, protected_paths=()):
     return removed, errors
 
 
-def preview(task_id, delete_outputs=False):
+def preview(task_id, delete_outputs=False, delete_sources=False):
     paths = metadata(task_id)
     if not paths[0].is_file():
         raise ValueError('任务不存在或已删除')
@@ -127,49 +127,102 @@ def preview(task_id, delete_outputs=False):
     sources = {identity(source) for source in entries}
     other_targets = set()
     digest = hashlib.sha256()
-    for file in sorted((DATA_PATH / 'record').glob('*.json')) if delete_outputs else ():
+    for file in sorted((DATA_PATH / 'record').glob('*.json')) if delete_outputs or delete_sources else ():
         raw = file.read_bytes(); digest.update(file.name.encode()); digest.update(raw)
         if file.stem != task_id:
             # Fail closed on unreadable history instead of deleting a shared output.
-            other_targets.update(identity(target) for target in extract_record_targets(json.loads(raw)))
+            other_record = json.loads(raw)
+            other_targets.update(identity(target) for target in extract_record_targets(other_record))
+            other_targets.update(identity(source) for source in extract_record_entries(other_record))
+    if delete_outputs or delete_sources:
+        for file in sorted((DATA_PATH / 'task').glob('*.json')):
+            raw = file.read_bytes(); digest.update(file.name.encode()); digest.update(raw)
+            if file.stem != task_id and (source := json.loads(raw).get('path')):
+                other_targets.add(identity(source))
     for file in paths:
         digest.update(str(file).encode()); digest.update(file.read_bytes() if file.exists() else b'')
     rows = []
-    for target in sorted(extract_record_targets(record), key=str):
+    targets = {identity(target): (target, 'output') for target in extract_record_targets(record)}
+    if delete_sources:
+        for source in entries:
+            key = identity(source)
+            targets[key] = (Path(source), 'source_output' if key in targets else 'source')
+    for target, kind in sorted(targets.values(), key=lambda row: str(row[0])):
         key = identity(target)
         reason, action, signature = '保留输出文件', 'keep', None
-        if delete_outputs:
+        requested = delete_sources if kind != 'output' else delete_outputs
+        if requested:
             try:
                 info = target.lstat()
-                signature = [info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns]
+                signature = [info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_mode]
             except FileNotFoundError:
                 info = None
             if not target.is_absolute():
-                reason = '相对输出路径需人工核对，保留'
-            elif key in sources or task.get('path') and key == identity(task['path']):
+                reason = '相对路径需人工核对，保留'
+            elif not delete_sources and (key in sources or task.get('path') and key == identity(task['path'])):
                 reason = '源路径，保留'
             elif any(identity(parent) in other_targets for parent in (Path(key), *Path(key).parents)):
                 reason = '其他任务共用，保留'
+            elif any(is_link_directory(parent) for parent in target.parents):
+                reason = '父目录为链接，需人工核对，保留'
             elif info is None:
                 action, reason = 'missing', '文件已不存在'
             elif stat_types.S_ISDIR(info.st_mode) or (stat_types.S_ISLNK(info.st_mode) and target.is_dir()):
                 reason = '目录保留内容，仅清理空目录'
+            elif not (stat_types.S_ISREG(info.st_mode) or stat_types.S_ISLNK(info.st_mode)):
+                reason = '非普通文件，保留'
             else:
                 action, reason = 'trash', '移入回收站'
-        rows.append({'path': str(target), 'action': action, 'reason': reason, 'signature': signature})
-    roots = cleanup_roots(task, read(paths[2]), [Path(row['path']) for row in rows if row['action'] in {'trash', 'missing'} or row['reason'].startswith('目录保留')]) if delete_outputs else []
+        rows.append({'path': str(target), 'kind': kind, 'action': action, 'reason': reason, 'signature': signature})
+    roots = cleanup_roots(task, read(paths[2]), [Path(row['path']) for row in rows if row['kind'] != 'source' and (row['action'] in {'trash', 'missing'} or row['reason'].startswith('目录保留'))]) if delete_outputs else []
     candidates = sources | other_targets | ({identity(task['path'])} if task.get('path') else set())
     # Only intersecting paths can protect directories inside these cleanup boundaries.
     root_keys = [identity(root) for root in roots]
     protected_paths = sorted(value for value in candidates if any(
         value == root or value.startswith(root.rstrip(os.sep) + os.sep)
         or root.startswith(value.rstrip(os.sep) + os.sep) for root in root_keys))
-    digest.update(json.dumps([bool(delete_outputs), rows, list(map(str, roots)), protected_paths], ensure_ascii=False, sort_keys=True).encode())
+    digest.update(json.dumps([bool(delete_outputs), bool(delete_sources), rows, list(map(str, roots)), protected_paths], ensure_ascii=False, sort_keys=True).encode())
     return {'id': task_id, 'name': task.get('name') or task_id, 'source': task.get('path'),
-            'delete_outputs': bool(delete_outputs), 'rows': rows, 'token': digest.hexdigest(),
+            'delete_outputs': bool(delete_outputs), 'delete_sources': bool(delete_sources), 'rows': rows, 'token': digest.hexdigest(),
+            'source_count': sum(row['kind'] != 'output' and row['action'] == 'trash' for row in rows),
             'trash_count': sum(row['action'] == 'trash' for row in rows),
             'keep_count': sum(row['action'] == 'keep' for row in rows),
             'cleanup_roots': list(map(str, roots)), 'protected_paths': protected_paths}
+
+
+def check_delete_access(targets):
+    """Probe DELETE access without moving, changing, or deleting any file."""
+    if os.name != 'nt':
+        return
+    import ctypes
+    from ctypes import wintypes
+    kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+    kernel.CreateFileW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD,
+                                  ctypes.c_void_p, wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE]
+    kernel.CreateFileW.restype = wintypes.HANDLE
+    kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+    for target in targets:
+        # OPEN_EXISTING + DELETE access, sharing reads/writes/deletes. Open the link
+        # itself; neither FILE_FLAG_DELETE_ON_CLOSE nor a delete API is used.
+        handle = kernel.CreateFileW(str(target), 0x10000, 7, None, 3, 0x02200000, None)
+        if handle == ctypes.c_void_p(-1).value:
+            code = ctypes.get_last_error()
+            if code in (32, 33):
+                raise OSError(f'文件正被其他程序占用，无法移入回收站：{target}；请关闭播放此文件的播放器或其他占用程序，再重新预览后重试')
+            if code == 5:
+                raise OSError(f'没有删除此文件的权限：{target}；请检查文件权限后重新预览')
+            raise OSError(f'无法检查文件的删除权限（Windows 错误 {code}）：{target}；请重新预览后重试')
+        kernel.CloseHandle(handle)
+
+
+def describe_recycle_error(error, targets):
+    code = getattr(error, 'hresult', None)
+    if code is None and error.args and isinstance(error.args[0], int):
+        code = error.args[0]
+    if code is not None and code & 0xffffffff in (0x80270027, 0x80070020, 0x80070021):
+        paths = '；'.join(map(str, targets))
+        return OSError(f'文件正被其他程序占用，无法移入回收站；请关闭播放器或其他占用程序，再重新预览后重试。当前批次：{paths}')
+    return error
 
 
 def recycle_batch(targets):
@@ -187,8 +240,15 @@ def recycle_batch(targets):
         for target in targets:
             item = shell.SHCreateItemFromParsingName(str(target), None, shell.IID_IShellItem)
             operation.DeleteItem(item, None)
-        operation.PerformOperations()
+        try:
+            operation.PerformOperations()
+        except Exception as error:
+            described = describe_recycle_error(error, targets)
+            if described is error:
+                raise
+            raise described from error
         if operation.GetAnyOperationsAborted() or any(target.exists() or target.is_symlink() for target in targets):
+            check_delete_access([target for target in targets if target.exists() or target.is_symlink()])
             raise OSError('回收站操作未完成')
     finally:
         pythoncom.CoUninitialize()
@@ -198,8 +258,8 @@ def recycle(target):
     recycle_batch([target])
 
 
-def execute(task_id, token, delete_outputs=False, *, trash=recycle):
-    current = preview(task_id, delete_outputs)
+def execute(task_id, token, delete_outputs=False, delete_sources=False, *, trash=recycle):
+    current = preview(task_id, delete_outputs, delete_sources)
     if current['token'] != token:
         raise ValueError('记录或文件已变化，请重新预览后删除')
     paths = metadata(task_id)
@@ -215,6 +275,9 @@ def execute(task_id, token, delete_outputs=False, *, trash=recycle):
     try:
         targets = [Path(row['path']) for row in current['rows'] if row['action'] == 'trash']
         if trash is recycle:
+            # Check the entire selection before recycling any batch, so a locked
+            # file near the end does not leave earlier batches already recycled.
+            check_delete_access(targets)
             # Queue several shell items per operation rather than creating one COM session per file.
             for offset in range(0, len(targets), 32):
                 batch = targets[offset:offset + 32]
@@ -245,6 +308,6 @@ def execute(task_id, token, delete_outputs=False, *, trash=recycle):
         for original in journal['metadata']:
             file = Path(original); file.write_bytes((archive / file.parent.name / file.name).read_bytes())
         atomic_write(archive / 'deletion.json', journal)
-        raise ValueError('删除未完成，任务记录已保留；部分输出可能已移入回收站，请检查后重试：' + str(error)) from error
+        raise ValueError(f'删除未完成，任务记录已保留；本次已有 {len(journal["recycled"])} 个文件移入回收站：' + str(error)) from error
     return {'id': task_id, 'archive': str(archive), 'outputs': len(journal['recycled']), 'dirs': len(journal['removed_dirs']),
-            'message': f'已删除任务记录，{len(journal["recycled"])} 个关联输出已移入回收站，清理 {len(journal["removed_dirs"])} 个空目录；其余文件保留'}
+            'message': f'已删除任务记录，{len(journal["recycled"])} 个关联文件已移入回收站（含 {current["source_count"]} 个原文件），清理 {len(journal["removed_dirs"])} 个空目录；其余文件保留'}

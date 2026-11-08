@@ -83,6 +83,18 @@ def import_targets(source, video, videos, suffix=None):
     return subtitle_target(source, originals[0], suffix), subtitle_target(source, video, suffix)
 
 
+def subtitle_mirror(video, original, output):
+    """Keep companions beside the physical video as well as the library alias."""
+    video, original, output = map(Path, (video, original, output))
+    if not video.is_symlink():
+        return None
+    mirror = video.resolve(strict=True).with_name(output.name)
+    normalized = lambda path: os.path.normcase(os.path.abspath(path))
+    if normalized(mirror) in {normalized(original), normalized(output)}:
+        return None
+    return mirror
+
+
 def selected_subtitles(folder=None, files=None):
     if files is not None:
         if not isinstance(files, list) or not files or any(not isinstance(p, str) or not p.strip() for p in files):
@@ -196,16 +208,19 @@ def execute_import(task_id, rows):
         if row['video'] not in videos or source.suffix.lower() not in SUBTITLES or not source.is_file():
             raise ValueError('文件或任务已变化，请重新预览')
         original, output = import_targets(source, row['video'], videos, row.get('suffix'))
-        for target in dict.fromkeys([original, output]):
+        mirror = subtitle_mirror(row['video'], original, output)
+        for target in dict.fromkeys([original, output, *([mirror] if mirror else [])]):
             key = str(target.absolute()).casefold()
-            if key in targets or (target == original and os.path.lexists(target)):
+            if key in targets or (target in (original, mirror) and os.path.lexists(target)):
                 raise ValueError(f'目标重复或已存在，请跳过其中一项：{target}')
             if target.is_dir():
                 raise ValueError(f'目标是目录，无法写入字幕：{target}')
             targets.add(key)
         operations.append({'source': str(source), 'original': str(original),
-                           'target': str(output), 'copied': False})
+                           'target': str(output), 'mirror': str(mirror) if mirror else None, 'copied': False})
         entries[str(original)] = {'target': str(output)}
+        if mirror:
+            entries[str(original)]['mirror'] = str(mirror)
         count += 1
     if not operations:
         raise ValueError('没有已匹配的字幕')
@@ -229,15 +244,23 @@ def execute_import(task_id, rows):
                 created.append(original)
                 with open(operation['source'], 'rb') as source:
                     shutil.copyfileobj(source, output)
+            mirror = Path(operation['mirror']) if operation.get('mirror') else None
+            if mirror:
+                os.link(original, mirror)
+                created.append(mirror)
             if original != target:
                 stage = target.with_name(f'.{target.name}.{uuid4().hex}.link')
                 staged.append(stage)
-                try:
-                    os.link(original, stage)
-                    operation['link_type'] = 'hardlink'
-                except OSError:
-                    os.symlink(original.absolute(), stage)
+                if mirror:
+                    os.symlink(mirror.absolute(), stage)
                     operation['link_type'] = 'symlink'
+                else:
+                    try:
+                        os.link(original, stage)
+                        operation['link_type'] = 'hardlink'
+                    except OSError:
+                        os.symlink(original.absolute(), stage)
+                        operation['link_type'] = 'symlink'
                 if os.path.lexists(target):
                     backup = target.with_name(f'.{target.name}.{uuid4().hex}.backup')
                     operation['backup'] = str(backup)

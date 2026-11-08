@@ -27,7 +27,7 @@ test('trash requires confirmation, rejects unrelated paths, preserves surviving 
   const electron={net:{},BrowserWindow:{fromWebContents:()=>null},dialog:{async showMessageBox(options){dialogs++;assert.match(options.detail,/A\.mkv/);return {response};}},shell:{async trashItem(file){trashCalls++;if(fail)throw Error('file locked');await fs.unlink(file);}}};
   class DB{loadDatabase(cb){cb();}find(query,cb){cb(null,[{_id:'WorkSaveNo1',data:work}]);}update(query,changes,options,cb){setImmediate(()=>cb(null));}}
   const filename=path.resolve('js/rename-binding-main.cjs'),nativeRequire=createRequire(filename),module={exports:{}};
-  vm.runInNewContext(await fs.readFile(filename,'utf8'),{module,exports:module.exports,require:name=>name==='electron'?electron:nativeRequire(name),process:{env:{BGM_RES_DATA_DIR:directory}},__dirname:path.dirname(filename)});
+  vm.runInNewContext(await fs.readFile(filename,'utf8'),{module,exports:module.exports,require:name=>name==='./cadensview-main.cjs'?{register(){}}:name==='electron'?electron:nativeRequire(name),process:{env:{BGM_RES_DATA_DIR:directory}},__dirname:path.dirname(filename)});
   await module.exports.start({ipcMain:{handle:(name,fn)=>handlers.set(name,fn),on(){}},app:{getPath:()=>directory},sysdata:{set(){}},Datastore:DB});
   const trash=target=>handlers.get('library:trash-file')({sender:{}},{id:'WorkSaveNo1',path:target});
   await assert.rejects(trash(outside),/已登记/);assert.equal(dialogs,0);assert.equal(trashCalls,0);
@@ -53,7 +53,7 @@ test('single and bulk record cleanup never delete files and reject clearing heal
   const work=core.mergeWork(group,{},'WorkSaveNo1'),handlers=new Map();let fail=false;
   class DB{loadDatabase(cb){cb();}find(query,cb){cb(null,[{_id:'WorkSaveNo1',data:work}]);}update(query,changes,options,cb){setImmediate(()=>cb(fail?Error('write failure'):null));}}
   const filename=path.resolve('js/rename-binding-main.cjs'),nativeRequire=createRequire(filename),module={exports:{}};
-  vm.runInNewContext(await fs.readFile(filename,'utf8'),{module,exports:module.exports,require:name=>name==='electron'?{net:{}}:nativeRequire(name),process:{env:{BGM_RES_DATA_DIR:directory}},__dirname:path.dirname(filename)});
+  vm.runInNewContext(await fs.readFile(filename,'utf8'),{module,exports:module.exports,require:name=>name==='./cadensview-main.cjs'?{register(){}}:name==='electron'?{net:{}}:nativeRequire(name),process:{env:{BGM_RES_DATA_DIR:directory}},__dirname:path.dirname(filename)});
   await module.exports.start({ipcMain:{handle:(name,fn)=>handlers.set(name,fn),on(){}},app:{getPath:()=>directory},sysdata:{set(){}},Datastore:DB});
   const clear=selection=>handlers.get('library:clear-records')(null,selection);
   await assert.rejects(clear({id:'WorkSaveNo1',paths:[video]}),/已登记/);

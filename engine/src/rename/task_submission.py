@@ -34,7 +34,7 @@ def existing_task(path, directory=None):
     directory = TASK_PATH if directory is None else directory
     rows = _index(str(directory)).refresh().rows
     key = task_path_key(path)
-    matches = [row for row in rows if key and task_path_key(row['path']) == key]
+    matches = [row for row in rows if key and not row.get('manifest_scoped') and task_path_key(row['path']) == key]
     # A single source pack may already have been split into one task per Bangumi
     # subject. Return the whole set so resubmission does not hide those records.
     if matches:

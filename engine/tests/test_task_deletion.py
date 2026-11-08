@@ -38,6 +38,129 @@ class TaskDeletionTests(unittest.TestCase):
         self.assertEqual(calls, [self.output]); self.assertEqual(result['outputs'], 1)
         self.assertTrue(self.source.exists()); self.assertTrue(other.exists())
 
+    def test_originals_and_hardlinked_outputs_can_both_be_recycled(self):
+        self.output.unlink(); self.output.hardlink_to(self.source)
+        preview = deletion.preview('one', True, True)
+        self.assertEqual(preview['source_count'], 1)
+        self.assertEqual(preview['trash_count'], 2)
+        result = deletion.execute('one', preview['token'], True, True, trash=lambda p: p.unlink())
+        self.assertFalse(self.source.exists()); self.assertFalse(self.output.exists())
+        self.assertIn('1 个原文件', result['message'])
+
+    def test_originals_only_retains_outputs_and_unregistered_source_neighbors(self):
+        neighbor = self.root / 'unregistered.ass'; neighbor.write_bytes(b'keep')
+        preview = deletion.preview('one', False, True)
+        self.assertEqual(preview['trash_count'], 1)
+        deletion.execute('one', preview['token'], False, True, trash=lambda p: p.unlink())
+        self.assertFalse(self.source.exists()); self.assertTrue(self.output.exists()); self.assertTrue(neighbor.exists())
+
+    def test_other_tasks_sources_outputs_and_source_directories_are_protected(self):
+        for reference in ('source', 'output', 'directory'):
+            with self.subTest(reference=reference):
+                atomic_write(self.root / 'record/two.json', {'entries': {
+                    str(self.source if reference == 'source' else self.root / 'another.mkv'):
+                        {'target': str(self.source if reference == 'output' else self.root / 'other.mkv')}}})
+                atomic_write(self.root / 'task/two.json', {'path': str(self.root if reference == 'directory' else self.root / 'another.mkv')})
+                preview = deletion.preview('one', False, True)
+                row = next(row for row in preview['rows'] if row['kind'] == 'source')
+                self.assertEqual(row['action'], 'keep'); self.assertIn('共用', row['reason'])
+
+    def test_changed_original_options_and_new_task_invalidate_confirmation(self):
+        preview = deletion.preview('one', True, False)
+        with self.assertRaisesRegex(ValueError, '已变化'):
+            deletion.execute('one', preview['token'], True, True, trash=Mock())
+        preview = deletion.preview('one', False, True)
+        self.source.write_bytes(b'changed original')
+        with self.assertRaisesRegex(ValueError, '已变化'):
+            deletion.execute('one', preview['token'], False, True, trash=Mock())
+        preview = deletion.preview('one', False, True)
+        atomic_write(self.root / 'task/two.json', {'path': str(self.source)})
+        with self.assertRaisesRegex(ValueError, '已变化'):
+            deletion.execute('one', preview['token'], False, True, trash=Mock())
+
+    def test_missing_original_and_shared_source_output_are_deduplicated(self):
+        self.source.unlink()
+        preview = deletion.preview('one', True, True)
+        self.assertEqual(preview['trash_count'], 1)
+        self.assertEqual(next(row for row in preview['rows'] if row['kind'] == 'source')['action'], 'missing')
+        atomic_write(self.root / 'record/one.json', {'entries': {str(self.output): {'target': str(self.output)}}})
+        preview = deletion.preview('one', True, True)
+        self.assertEqual(len(preview['rows']), 1)
+        calls = []
+        def trash(path): calls.append(path); path.unlink()
+        deletion.execute('one', preview['token'], True, True, trash=trash)
+        self.assertEqual(calls, [self.output])
+
+    def test_original_directories_and_relative_sources_are_never_recycled(self):
+        atomic_write(self.root / 'record/one.json', {'entries': {
+            str(self.root): {'target': str(self.output)}, 'relative.mkv': {'target': str(self.output)}}})
+        preview = deletion.preview('one', False, True)
+        self.assertEqual(preview['trash_count'], 0)
+        self.assertTrue(all(row['action'] == 'keep' for row in preview['rows']))
+
+    def test_parent_symlink_does_not_allow_deleting_external_original(self):
+        outside = self.root / 'outside'; outside.mkdir()
+        original = outside / 'original.mkv'; original.write_bytes(b'keep')
+        link = self.root / 'linked'
+        try:
+            link.symlink_to(outside, target_is_directory=True)
+        except OSError:
+            self.skipTest('Directory symlinks unavailable')
+        atomic_write(self.root / 'record/one.json', {'entries': {
+            str(link / original.name): {'target': str(self.output)}}})
+        preview = deletion.preview('one', False, True)
+        row = next(row for row in preview['rows'] if row['kind'] == 'source')
+        self.assertEqual(row['action'], 'keep'); self.assertIn('父目录', row['reason'])
+
+    def test_original_recycle_failure_keeps_metadata_for_retry(self):
+        preview = deletion.preview('one', False, True)
+        with self.assertRaisesRegex(ValueError, '记录已保留'):
+            deletion.execute('one', preview['token'], False, True, trash=Mock(side_effect=OSError('locked')))
+        self.assertTrue(self.source.exists()); self.assertTrue((self.root / 'record/one.json').exists())
+
+    @unittest.skipUnless(__import__('os').name == 'nt', 'Windows file sharing')
+    def test_locked_file_blocks_all_batches_before_recycling(self):
+        import ctypes
+        from ctypes import wintypes
+        kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+        kernel.CreateFileW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD,
+                                      ctypes.c_void_p, wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE]
+        kernel.CreateFileW.restype = wintypes.HANDLE
+        kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+        handle = kernel.CreateFileW(str(self.source), 0x80000000, 1, None, 3, 0, None)
+        self.assertNotEqual(handle, ctypes.c_void_p(-1).value)
+        try:
+            preview = deletion.preview('one', True, True)
+            with patch.object(deletion, 'recycle_batch') as recycle_batch:
+                with self.assertRaisesRegex(ValueError, '0 个文件.*正被其他程序占用') as error:
+                    deletion.execute('one', preview['token'], True, True)
+                self.assertIn(str(self.source), str(error.exception))
+                recycle_batch.assert_not_called()
+            self.assertTrue(self.source.exists()); self.assertTrue(self.output.exists())
+            self.assertTrue((self.root / 'task/one.json').exists())
+            journal = json.loads(next((self.root / 'deleted_tasks').rglob('deletion.json')).read_text(encoding='utf-8'))
+            self.assertEqual(journal['recycled'], [])
+        finally:
+            kernel.CloseHandle(handle)
+        deletion.check_delete_access([self.source, self.output])
+
+    def test_shell_sharing_error_explains_lock_and_preserves_unrelated_errors(self):
+        error = Exception(-2144927705, 'OLE error 0x80270027')
+        described = deletion.describe_recycle_error(error, [self.output])
+        self.assertIn('正被其他程序占用', str(described)); self.assertIn(str(self.output), str(described))
+        other = OSError('disk error')
+        self.assertIs(deletion.describe_recycle_error(other, [self.output]), other)
+
+    def test_api_forwards_explicit_original_deletion_for_preview_and_execution(self):
+        from src.integration_api import perform
+        for value, enabled in ((True, True), (False, False), ('true', False), (None, False)):
+            with self.subTest(value=value), patch.object(deletion, 'preview') as preview, patch.object(deletion, 'execute') as execute:
+                body = {'id': 'one', 'token': 'reviewed', 'delete_outputs': True, 'delete_sources': value}
+                perform('delete-task-preview', body)
+                preview.assert_called_once_with('one', True, enabled)
+                perform('delete-task', body)
+                execute.assert_called_once_with('one', 'reviewed', True, enabled)
+
     def test_shared_output_source_and_directories_are_protected(self):
         directory = self.root / 'extras'; directory.mkdir(); (directory / 'keep.txt').write_text('keep')
         atomic_write(self.root / 'record/two.json', {'entries': {'other': {'target': str(self.output)}}})

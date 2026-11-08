@@ -24,7 +24,7 @@ def read(kind, key, ttl):
 
 def _path(kind, key):
     digest = hashlib.sha256(str(key).encode()).hexdigest()
-    version = 'v3' if kind == 'mapping' else 'v2'
+    version = 'v4' if kind == 'mapping' else 'v2'
     return DATA_PATH / 'title_cache' / f'{version}-{kind}-{digest}.json'
 
 

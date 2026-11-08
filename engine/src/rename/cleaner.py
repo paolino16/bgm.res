@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Dict, List, Tuple, Optional
 
 from ..logger import logger
+from .source_scan import source_entries
 from .utils import (
     NUM_MAP,
     ROMA_MAP,
@@ -253,7 +254,7 @@ def find_unique_parts_in_videos(directory: Path):
 
     video_ext = ['.mp4', '.mkv', '.avi', '.mov', '.flv']
     files: List[Path] = [
-        file for file in directory.iterdir() if file.suffix in video_ext
+        file for file in source_entries(directory) if file.suffix in video_ext
     ]
     filenames: List[str] = [file.stem for file in files]
 

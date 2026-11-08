@@ -37,6 +37,24 @@ class SubtitleImportTests(unittest.TestCase):
         self.assertIsNone(sub.episode_key('Show [01-12].ass'))
         self.assertIsNone(sub.episode_key('Show 1080p x265.ass'))
 
+    def test_legacy_import_also_mirrors_subtitle_beside_symlink_video(self):
+        mirror_video = self.root / 'mirror' / self.video.name
+        mirror_video.parent.mkdir()
+        os.link(self.original, mirror_video)
+        self.video.unlink()
+        os.symlink(mirror_video, self.video)
+        source = self.subtitle('Show EP01.chs.ass')
+        rows = [{'source': str(source), 'video': str(self.video), 'suffix': 'chs'}]
+        with patch.object(sub, 'get_record', return_value=self.record), patch.object(sub, 'DATA_PATH', self.root):
+            sub.execute_import('task', rows)
+        output = self.video.with_suffix('.chs.ass')
+        mirror = mirror_video.with_suffix('.chs.ass')
+        self.assertTrue(output.is_symlink())
+        self.assertEqual(output.resolve(), mirror.resolve())
+        self.assertTrue(os.path.samefile(mirror, self.original.with_suffix('.chs.ass')))
+        saved = json.loads((self.root / 'task.json').read_text(encoding='utf-8'))
+        self.assertEqual(saved['entries'][str(self.original.with_suffix('.chs.ass'))]['mirror'], str(mirror))
+
     def test_multilanguage_preview_and_copy(self):
         first = self.subtitle('Other [01].chs.ass')
         self.subtitle('Other [01].cht.ass')

@@ -114,7 +114,10 @@ function create({directory,onReturn}){
       if(!fs.existsSync(python))throw Error('找不到 Python 环境：'+python);
       const log=fs.openSync(path.join(target,'integration-service.log'),'a');
       let child;
-      try{child=spawn(python,['-m','src.desktop_service'],{cwd:project,env:{...process.env,BGM_RENAME_DATA:target,BGM_RENAME_HOST:'127.0.0.1'},windowsHide:true,detached:true,stdio:['ignore',log,log]});}finally{fs.closeSync(log);}
+      try{
+        const proxies=await require('./metadata-proxy.cjs').metadataProxies(url=>require('electron').session.defaultSession.resolveProxy(url));
+        child=spawn(python,['-m','src.desktop_service'],{cwd:project,env:{...process.env,BGM_METADATA_PROXIES:JSON.stringify(proxies),BGM_RENAME_DATA:target,BGM_RENAME_HOST:'127.0.0.1'},windowsHide:true,detached:true,stdio:['ignore',log,log]});
+      }finally{fs.closeSync(log);}
       let failure;child.on('error',e=>failure=e);child.unref();
       for(let i=0;i<100;i++){if(failure)throw failure;status=await health();if(status)break;await delay(300);}
       if(!status)throw Error('整理后台未就绪，请查看 integration-service.log');

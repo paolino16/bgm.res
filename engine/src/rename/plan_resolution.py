@@ -157,7 +157,9 @@ def build_adjusted_mapping(plan, edited_rows, *, row_errors=None):
             original = allowed[row['source']]
             # Discover companions in the same directory, including previously unmapped subtitles.
             candidates = set(mapping)
-            if source.parent.is_dir():
+            if 'source_files' in context:
+                candidates.update(map(Path, context['source_files']))
+            elif source.parent.is_dir():
                 candidates.update(p for p in source.parent.iterdir() if p.is_file())
             if context.get('layout_migration'):
                 from ..utils.utils import extract_record_targets

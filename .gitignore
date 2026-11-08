@@ -16,3 +16,5 @@ engine/.nicegui/
 启动原版绑定.cmd
 
 启动 bgm.res.cmd
+
+__pycache__/

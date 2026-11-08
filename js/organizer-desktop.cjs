@@ -1,11 +1,14 @@
 'use strict';
 // Native desktop views; the Python process supplies data and executes reviewed plans only.
 function create({ipc,node,button,notice,setHeader,container,isActive}){
+  const {recordScope,relatedTask}=require('./organizer-records.cjs');
+  const {pagination}=require('./pagination.cjs');
+  const taskJumpDraft={},rowJumpDraft={};
   const state={tasks:[],jobs:new Map(),query:'',filter:'all',page:0,screen:'tasks',selected:null,plan:null,rows:[],checked:null,dirty:true,busy:0,loaded:false};
   const {reviewRows,batchRows,confirmMappings,isMappingConfirmed,describeMapping}=require('./plan-review.cjs');
   const pageSize=30;
   const {reconcileChildren,preserveInteraction}=require('./ui-regions.cjs');
-  let mounted,refreshTaskList,refreshPlan,parked,loading;
+  let mounted,refreshTaskList,refreshPlan,parked,loading,taskSearch,taskFilter,workScope;
   const watching=new Set();
   const aiRuns=new Map();
   const confirmations=new Set();
@@ -56,7 +59,7 @@ function create({ipc,node,button,notice,setHeader,container,isActive}){
     }finally{confirmations.delete(task.uuid);syncPlanAI();}
   }
   function guarded(fn){return async()=>{try{await fn();}catch(error){notice(error.message);}};}
-  function jobTitle(job){const names={'deepseek-plan':'AI 辅助映射','deepseek-history':'读取 AI 调用记录','delete-task-preview':'预览删除范围','delete-task':'删除整理记录',recognize:'识别并生成方案',retry:'重新识别',plan:'读取方案',check:'检查文件方案',execute:'执行入库',config:'读取设置','save-config':'保存设置',layout:'预览目录迁移','save-task':'保存识别信息','add-subject':'载入关联条目','subtitle-preview':'匹配字幕','subtitle-execute':'导入字幕','cancel-review':'取消识别方案'};return names[job.action]||job.action;}
+  function jobTitle(job){const names={'deepseek-plan':'AI 辅助映射','deepseek-history':'读取 AI 调用记录','delete-task-preview':'预览删除范围','delete-task':'删除整理记录',recognize:'识别并生成方案','recognize-torrent':'识别已下载资源',retry:'重新识别',plan:'读取方案',check:'检查文件方案',execute:'执行入库',config:'读取设置','save-config':'保存设置',layout:'预览目录迁移','save-task':'保存识别信息','add-subject':'载入关联条目','subtitle-preview':'匹配字幕','subtitle-versions':'读取字幕版本','subtitle-manage':'更新字幕版本','subtitle-recover':'恢复字幕操作','subtitle-execute':'导入字幕','cancel-review':'取消识别方案'};return names[job.action]||job.action;}
   function updateJobs(){if(!isActive())return;const host=container().querySelector('[data-jobs]');if(!host)return;host.replaceChildren();const active=[...state.jobs.values()].filter(j=>['queued','running'].includes(j.state));for(const job of active){const seconds=job.clientStartedAt?Math.floor((Date.now()-job.clientStartedAt)/1000):0;const line=el('div','organizer-job',(job.state==='queued'?'等待执行 · ':'处理中 · ')+(job.progress||jobTitle(job))+(seconds?' · 已等待 '+seconds+' 秒':''));line.setAttribute('role','status');host.appendChild(line);}for(const job of visibleFailures(state.jobs.values(),{dismissed:dismissedJobs,historical:historicalFailures,taskId:state.screen==='tasks'?undefined:state.selected?.uuid})){const line=el('div','organizer-job job-failure');line.setAttribute('role','alert');const message=el('span','job-failure-message',jobTitle(job)+'失败：'+(job.error||'请重试'));const close=button('关闭',()=>{dismissedJobs.add(job.id);saveDismissed(noticeStorage,dismissedJobs);updateJobs();},'button quiet small');close.setAttribute('aria-label','关闭'+jobTitle(job)+'失败提示');line.append(message,close);host.appendChild(line);} }
   async function load(options){if(loading)return loading;loading=readTasks(options).finally(()=>{loading=null;});return loading;}
   async function readTasks(options){let data=await ipc.invoke('library:organize',options);if(!data&&isActive())data=await ipc.invoke('library:organize');if(!data)return;state.tasks=data.tasks;state.loaded=true;for(const job of data.jobs||[]){if(job.state==='failed'&&!state.jobs.has(job.id))historicalFailures.add(job.id);state.jobs.set(job.id,{...state.jobs.get(job.id),...job});if(job.action==='deepseek-plan'&&['queued','running'].includes(job.state))aiRuns.set(job.task_id,true);if(['queued','running'].includes(job.state)&&!watching.has(job.id))resume(job.id);}if(data.errors?.length)notice(data.errors.length+' 条损坏记录未载入');return data;}
@@ -105,11 +108,22 @@ function create({ipc,node,button,notice,setHeader,container,isActive}){
     const row=controls(),path=input('');path.placeholder='粘贴下载目录或视频文件路径';path.setAttribute('aria-label','整理来源路径');row.append(path,button('识别并预览',guarded(async()=>{if(!path.value.trim())throw Error('请填写源路径');await submit([path.value.trim()]);}),'button primary'));
     const pick=row;for(const [kind,title]of [['folder','选择目录'],['file','选择视频文件']])pick.appendChild(button(title,guarded(async()=>{const paths=await ipc.invoke('organizer:pick',kind);if(paths.length)await submit(paths);}), 'button quiet'));
     card.append(pick,hint('先预览，确认后再入库。'));host.appendChild(card);
-    const bar=controls(),search=input(state.query);search.placeholder='搜索作品、条目 ID 或路径';search.setAttribute('aria-label','搜索整理任务');search.oninput=()=>{state.query=search.value;state.page=0;renderTaskRows(list,pager);};const filter=select([['all','全部状态'],['待审核','待审核'],['需处理','需处理'],['已完成','已完成'],['已取消','已取消']],state.filter);filter.onchange=()=>{state.filter=filter.value;state.page=0;renderTaskRows(list,pager);};bar.append(search,filter,button('刷新任务',guarded(refresh),'button quiet'));host.appendChild(bar);const list=el('div','organizer-task-list'),pager=controls();host.append(list,pager);refreshTaskList=()=>preserveInteraction(list,()=>renderTaskRows(list,pager));renderTaskRows(list,pager);
+    const bar=controls(),search=input(state.query);taskSearch=search;search.placeholder='搜索作品、条目 ID 或路径';search.setAttribute('aria-label','搜索整理任务');search.oninput=()=>{state.query=search.value;workScope=null;state.page=0;renderTaskRows(list,pager);};const filter=select([['all','全部状态'],['待审核','待审核'],['需处理','需处理'],['已完成','已完成'],['已取消','已取消']],state.filter);taskFilter=filter;filter.onchange=()=>{state.filter=filter.value;state.page=0;renderTaskRows(list,pager);};bar.append(search,filter,button('刷新任务',guarded(refresh),'button quiet'));host.appendChild(bar);const list=el('div','organizer-task-list'),pager=controls();host.append(list,pager);refreshTaskList=()=>preserveInteraction(list,()=>renderTaskRows(list,pager));renderTaskRows(list,pager);
   }
-  async function submit(paths){const before=new Set(state.tasks.map(task=>task.uuid));notice('已接收 '+paths.length+' 个来源，正在生成方案…');for(const path of paths){const promise=action('recognize',{path});updateJobs();const result=await promise;notice(result.message||'识别完成');await load();if(isActive()&&state.screen==='tasks')render();}const pending=state.tasks.filter(t=>t.plan_state==='pending'&&(!before.has(t.uuid)||paths.some(source=>t.path&&require('path').resolve(t.path).toLowerCase()===require('path').resolve(source).toLowerCase())));if(pending.length&&isActive()&&state.screen==='tasks'){state.filter='待审核';state.query='';state.page=0;if(pending.length>1)notice('已生成 '+pending.length+' 个方案，先打开第一个，其余可返回任务列表查看');await openPlan(pending[0]);}}
+  async function submit(paths){const before=new Set(state.tasks.map(task=>task.uuid));notice('已接收 '+paths.length+' 个来源，正在生成方案…');for(const path of paths){const promise=action('recognize',{path});updateJobs();const result=await promise;notice(result.message||'识别完成');await load();if(isActive()&&state.screen==='tasks')render();}const pending=state.tasks.filter(t=>t.plan_state==='pending'&&(!before.has(t.uuid)||paths.some(source=>t.path&&require('path').resolve(t.path).toLowerCase()===require('path').resolve(source).toLowerCase())));if(pending.length&&isActive()&&state.screen==='tasks'){state.filter='待审核';state.query='';workScope=null;state.page=0;if(pending.length>1)notice('已生成 '+pending.length+' 个方案，先打开第一个，其余可返回任务列表查看');await openPlan(pending[0]);}}
   function renderTaskRows(list,pager){
-    const query=state.query.toLocaleLowerCase();const tasks=state.tasks.filter(t=>(state.filter==='all'||status(t)===state.filter)&&[t.name,t.path,t.bgm_id,t.subject_id].some(v=>String(v??'').toLocaleLowerCase().includes(query)));const pages=Math.max(1,Math.ceil(tasks.length/pageSize));state.page=Math.min(state.page,pages-1);const cards=[],cache=list._taskCards||new Map();pager.replaceChildren();
+    if(taskSearch&&taskSearch.value!==state.query)taskSearch.value=state.query;
+    if(taskSearch)taskSearch.title=workScope?'当前番剧的关联整理记录；编辑搜索框可搜索其他作品':'';
+    if(taskFilter&&taskFilter.value!==state.filter)taskFilter.value=state.filter;
+    const query=state.query.toLocaleLowerCase();
+    const tasks=state.tasks.filter(task=>{
+      if(state.filter!=='all'&&status(task)!==state.filter)return false;
+      if(workScope)return relatedTask(task,workScope);
+      return [task.name,task.path,task.bgm_id,task.subject_id,...(Array.isArray(task.subject_ids)?task.subject_ids:[])]
+        .some(value=>String(value??'').toLocaleLowerCase().includes(query));
+    });
+    const pages=Math.max(1,Math.ceil(tasks.length/pageSize));state.page=Math.min(state.page,pages-1);
+    const cards=[],cache=list._taskCards||new Map();pager.replaceChildren();
     if(!tasks.length)cards.push(el('div','empty-state',state.loaded?'暂无匹配任务':'正在读取整理任务…'));
     for(const task of tasks.slice(state.page*pageSize,(state.page+1)*pageSize)){
       const signature=JSON.stringify(task),cached=cache.get(task.uuid);if(cached?.signature===signature){cards.push(cached.card);continue;}
@@ -122,24 +136,32 @@ function create({ipc,node,button,notice,setHeader,container,isActive}){
       if(task.layout==='legacy'&&(task.subject_id||task.bgm_id))actions.appendChild(button('预览条目目录迁移',guarded(async()=>{const plan=await action('layout',{id:task.uuid});adoptPlan(task,plan);})));card.appendChild(actions);cards.push(card);cache.set(task.uuid,{signature,card});
     }
     reconcileChildren(list,cards);list._taskCards=cache;
-    const prev=button('上一页',()=>{state.page--;renderTaskRows(list,pager);}),next=button('下一页',()=>{state.page++;renderTaskRows(list,pager);});prev.disabled=state.page===0;next.disabled=state.page>=pages-1;pager.append(el('span','',tasks.length+' 条 · '+(state.page+1)+' / '+pages+' 页'),prev,next);
+    pager.append(pagination({node:el,button,page:state.page+1,pages,summary:tasks.length+' 条',label:'整理任务分页',
+      draft:taskJumpDraft,contextKey:JSON.stringify([state.query,state.filter]),
+      onChange:page=>{state.page=page-1;renderTaskRows(list,pager);}}));
   }
   function renderDelete(host){
     const task=state.selected,preview=state.deletion;
     host.appendChild(button('← 返回整理任务',back,'button quiet'));
     const card=el('section','settings-card');card.append(el('h3','','删除 · '+preview.name),hint('源路径：'+(preview.source||'未记录')));
     const removeOutputs=input('','checkbox');removeOutputs.checked=preview.delete_outputs;
-    removeOutputs.onchange=guarded(async()=>{host.inert=true;try{state.deletion=await action('delete-task-preview',{id:task.uuid,delete_outputs:removeOutputs.checked});render();}finally{host.inert=false;}});
-    card.append(label('同时将此任务关联的输出文件移入回收站',removeOutputs),hint('默认只移除任务、执行记录及待审核方案，保留输出文件。源文件、其他任务共用文件会保留；删除前会备份记录。'),hint(preview.trash_count+' 个输出将回收 · '+preview.keep_count+' 个输出保留'));
+    const removeSources=input('','checkbox');removeSources.checked=preview.delete_sources===true;
+    const outputsField=label('同时将此任务关联的输出文件移入回收站',removeOutputs),sourcesField=label('同时将已登记的原文件移入回收站',removeSources);
+    outputsField.classList.add('organizer-inline-check');sourcesField.classList.add('organizer-inline-check');
+    const deletionOptions=()=>({id:task.uuid,delete_outputs:removeOutputs.checked,delete_sources:removeSources.checked});
+    const refreshDeletion=guarded(async()=>{host.inert=true;try{state.deletion=await action('delete-task-preview',deletionOptions());render();}catch(error){removeOutputs.checked=preview.delete_outputs;removeSources.checked=preview.delete_sources===true;throw error;}finally{host.inert=false;}});
+    removeOutputs.onchange=refreshDeletion;removeSources.onchange=refreshDeletion;
+    card.append(outputsField,sourcesField,hint('默认只删除记录。原文件仅处理执行记录中登记的文件，不删除整个源文件夹；其他任务共用文件会保留。删除前会备份记录。'),hint(preview.trash_count+' 个文件将回收（含 '+(preview.source_count||0)+' 个原文件） · '+preview.keep_count+' 个文件保留'));
+    if(preview.delete_sources)card.appendChild(hint('原文件删除后，保留的软链接可能失效；同时回收输出与原文件后，视频可能已无可用副本。请核对下面的清单。'));
     if(preview.delete_outputs){card.appendChild(hint('回收输出后递归清理空目录，到下面列出的作品目录为止；仍有内容的目录会保留。'));for(const root of preview.cleanup_roots||[])card.appendChild(hint('清理边界：'+root));if(!preview.cleanup_roots?.length)card.appendChild(hint('无法确认作品目录边界，本次保留目录。'));}
-    const confirm=button(preview.delete_outputs?'确认删除记录并回收 '+preview.trash_count+' 个文件':'确认仅删除记录',guarded(async()=>{
+    const confirm=button(preview.delete_outputs||preview.delete_sources?'确认删除记录并回收 '+preview.trash_count+' 个文件':'确认仅删除记录',guarded(async()=>{
       if(state.busy)throw Error('请等待当前任务完成');host.inert=true;
-      try{const result=await action('delete-task',{id:task.uuid,token:preview.token,delete_outputs:preview.delete_outputs});state.selected=null;state.deletion=null;state.screen='tasks';await load();render();notice(result.message);}
+      try{const result=await action('delete-task',{id:task.uuid,token:preview.token,delete_outputs:preview.delete_outputs,delete_sources:preview.delete_sources===true});state.selected=null;state.deletion=null;state.screen='tasks';await load();render();notice(result.message);}
       finally{host.inert=false;}
     }),'button danger');
-    const actions=controls();actions.append(button('取消',back,'button quiet'),button('刷新删除清单',guarded(async()=>{host.inert=true;try{state.deletion=await action('delete-task-preview',{id:task.uuid,delete_outputs:preview.delete_outputs});render();}finally{host.inert=false;}}),'button quiet'),confirm);card.appendChild(actions);host.appendChild(card);
-    const files=el('details','plan-companions');files.open=true;files.appendChild(el('summary','',preview.rows.length+' 个已登记输出的处理清单'));
-    const table=el('table','organizer-preview');for(const row of preview.rows){const tr=el('tr');tr.append(el('td','',row.path),el('td','',row.reason));table.appendChild(tr);}files.appendChild(table);host.appendChild(files);
+    const actions=controls();actions.append(button('取消',back,'button quiet'),button('刷新删除清单',refreshDeletion,'button quiet'),confirm);card.appendChild(actions);host.appendChild(card);
+    const files=el('details','plan-companions');files.open=true;files.appendChild(el('summary','',preview.rows.length+' 个已登记文件的处理清单'));
+    const table=el('table','organizer-preview');for(const row of preview.rows){const tr=el('tr');tr.append(el('td','',row.kind==='source'?'原文件':row.kind==='source_output'?'原文件 / 输出':'输出 / 镜像'),el('td','',row.path),el('td','',row.reason));table.appendChild(tr);}files.appendChild(table);host.appendChild(files);
   }
   function adoptPlan(task,plan){if(!plan||plan.state!=='pending')throw Error('没有可审核的方案，请先重新识别');state.selected=task;state.plan=plan;state.groupDraft=plan.context.subtitle_group||'';state.rows=JSON.parse(JSON.stringify(plan.draft_rows||plan.rows));state.checked=plan.review||null;state.dirty=!plan.review;state.rowPage=0;state.reviewQuery='';state.onlyAttention=false;state.reviewFilter='all';state.expanded=new Set();state.selectedSources=new Set();state.screen='plan';render();}
   async function openPlan(task){const plan=await action('plan',{id:task.uuid});adoptPlan(task,plan);}
@@ -166,7 +188,7 @@ function create({ipc,node,button,notice,setHeader,container,isActive}){
     membership.append(summary,hint('候选可以多选；没有列出的作品可按 Bangumi ID 添加。'));
     const addLine=controls(),addId=input('');addId.placeholder='添加归属作品的 Bangumi ID';addId.setAttribute('aria-label','添加归属作品的 Bangumi ID');
     addLine.append(addId,button('添加归属',()=>{const id=addId.value.trim();if(!/^[1-9]\d*$/.test(id)){notice('请输入有效的 Bangumi ID');return;}if(selected.size>=20&&!selected.has(id)){notice('最多选择二十个归属');return;}selected.add(id);addId.value='';syncSelection();},'button small'));membership.appendChild(addLine);
-    if(task.bangumi_candidates?.length){const candidates=el('div','organizer-candidates');candidates.appendChild(el('h4','','匹配候选 · 可多选'));for(const item of task.bangumi_candidates){const id=String(item.id||item.subject_id),row=el('div','organizer-candidate-row'),check=input('','checkbox');check.checked=selected.has(id);check.setAttribute('aria-label','归属作品 '+(item.name_cn||item.name||id));check.onchange=()=>{if(check.checked){if(selected.size>=20){check.checked=false;notice('最多选择二十个归属');return;}selected.add(id);}else selected.delete(id);syncSelection();};checks.set(id,check);const head=el('div','organizer-candidate-head'),choice=el('label','organizer-candidate-choice');choice.append(check,el('span','',item.name_cn||item.name||id));head.append(choice,el('code','organizer-candidate-id','BGM '+id),el('time','organizer-candidate-date',item.date||'日期未知'));row.append(head,el('div','organizer-candidate-original',item.name||''));if(item.recall_evidence?.length){const evidence=el('details','organizer-candidate-evidence');evidence.appendChild(el('summary','','查看匹配依据'));for(const e of item.recall_evidence)evidence.appendChild(hint(e.source==='reading'?'自动读音 · '+e.title:'Tenrai / MAL '+e.mal_id+' · '+e.title+' · 跨库对应分 '+Number(e.match_score||0).toFixed(2)+' / 10'));row.appendChild(evidence);}candidates.appendChild(row);}membership.appendChild(candidates);}
+    if(task.bangumi_candidates?.length){const candidates=el('div','organizer-candidates');candidates.appendChild(el('h4','','匹配候选 · 可多选'));for(const item of task.bangumi_candidates){const id=String(item.id||item.subject_id),row=el('div','organizer-candidate-row'),check=input('','checkbox');check.checked=selected.has(id);check.setAttribute('aria-label','归属作品 '+(item.name_cn||item.name||id));check.onchange=()=>{if(check.checked){if(selected.size>=20){check.checked=false;notice('最多选择二十个归属');return;}selected.add(id);}else selected.delete(id);syncSelection();};checks.set(id,check);const head=el('div','organizer-candidate-head'),choice=el('label','organizer-candidate-choice');choice.append(check,el('span','',item.name_cn||item.name||id));head.append(choice,el('code','organizer-candidate-id','BGM '+id),el('time','organizer-candidate-date',item.date||'日期未知'));row.append(head,el('div','organizer-candidate-original',item.name||''));if(item.suggestion_reason)row.appendChild(hint(item.suggestion_reason));if(item.recall_evidence?.length){const evidence=el('details','organizer-candidate-evidence');evidence.appendChild(el('summary','','查看匹配依据'));for(const e of item.recall_evidence)evidence.appendChild(hint(e.source==='reading'?'自动读音 · '+e.title:'Tenrai / MAL '+e.mal_id+' · '+e.title+' · 跨库对应分 '+Number(e.match_score||0).toFixed(2)+' / 10'));row.appendChild(evidence);}candidates.appendChild(row);}membership.appendChild(candidates);}
     drawSelected();form.appendChild(membership);
     for(const warning of task.recall_warnings||[])form.appendChild(hint(warning));
     advanced.appendChild(advancedFields);form.appendChild(advanced);
@@ -218,6 +240,16 @@ function create({ipc,node,button,notice,setHeader,container,isActive}){
       line.append(id,button('载入作品',guarded(async()=>{const subjectId=id.value.trim();if(!/^[1-9]\d*$/.test(subjectId))throw Error('请输入有效的 Bangumi ID');const context=await action('add-subject',{id:task.uuid,revision:plan.revision,subject_id:subjectId});state.plan=context;invalid();render();})));
       assignment.appendChild(line);
       const subjects=new Map([plan.context,...Object.values(plan.context.subjects||{})].filter(s=>s.subject_id).map(s=>[String(s.subject_id),s]));
+      for(const item of plan.context.suggested_subjects||[]){
+        if(subjects.has(String(item.id)))continue;
+        const row=controls();
+        row.dataset.planMutation='';
+        row.append(button('载入 '+(item.name_cn||item.name),guarded(async()=>{
+          state.plan=await action('add-subject',{id:task.uuid,revision:plan.revision,subject_id:String(item.id)});
+          invalid();render();
+        })),hint(item.suggestion_reason));
+        assignment.appendChild(row);
+      }
       if(subjects.size){const names=el('div','plan-associated-subjects');for(const [sid,subject]of subjects)names.appendChild(el('span','',subject.name+' · '+sid));assignment.appendChild(names);}
       secondary.appendChild(assignment);
     }
@@ -257,8 +289,9 @@ function create({ipc,node,button,notice,setHeader,container,isActive}){
       }
       reconcileChildren(rowsHost,cards);
       if(!filteredRows.length)rowsHost.appendChild(hint('没有符合条件的视频，试试其他关键词或状态。'));
-      const prev=button('上一页',()=>{state.rowPage--;drawRows();}),next=button('下一页',()=>{state.rowPage++;drawRows();});prev.disabled=!state.rowPage;next.disabled=state.rowPage>=pages-1;
-      pager.append(el('span','',filteredRows.length+' 个视频 · '+(state.rowPage+1)+' / '+pages+' 页'),prev,next);selection.disabled=!filteredRows.length;
+      pager.append(pagination({node:el,button,page:state.rowPage+1,pages,summary:filteredRows.length+' 个视频',label:'方案文件分页',
+        draft:rowJumpDraft,contextKey:JSON.stringify([task.uuid,state.reviewQuery,state.reviewFilter]),
+        onChange:page=>{state.rowPage=page-1;drawRows();}}));selection.disabled=!filteredRows.length;
       const count=filteredRows.filter(item=>item.canConfirm).length;confirmFiltered.textContent='确认筛选映射（'+count+'）';confirmFiltered.disabled=!count;confirmFiltered.hidden=plan.context.layout!=='bangumi';
       drawBatch();setPlanLocked(host,planIsLocked(task.uuid));
     }
@@ -342,6 +375,18 @@ function create({ipc,node,button,notice,setHeader,container,isActive}){
     form.append(hint('设置对后续识别生效，已生成的方案保留创建时的处理方式。'),button('保存整理设置',guarded(async()=>{await action('save-config',{changes});Object.assign(config,changes);if('deepseek_api_key' in changes){config.deepseek_key_configured=Boolean(changes.deepseek_api_key);config.deepseek_api_key='';delete changes.deepseek_api_key;deepseekKey.value='';deepseekKey.placeholder=config.deepseek_key_configured?'已保存密钥，留空保持原值':'填写 DeepSeek API Key';}if('bigmodel_api_key' in changes){config.bigmodel_key_configured=Boolean(changes.bigmodel_api_key);config.bigmodel_api_key='';delete changes.bigmodel_api_key;glmKey.value='';glmKey.placeholder=config.bigmodel_key_configured?'已保存密钥，留空保持原值':'填写智谱 API Key';}if(changes.plan_ai_model)state.aiModel=changes.plan_ai_model;notice('整理设置已保存');}),'button primary'));host.appendChild(form);
   }
   async function preload(){if(state.loaded)return;try{await refresh({preload:true});}catch(error){if(isActive())notice(error.message);}}
-  return {render,refresh,suspend,preload};
+  async function openTask(id){
+    await load();
+    if(!isActive())return;
+    const task=state.tasks.find(task=>task.uuid===id);
+    if(!task)throw Error('该整理任务已移除');
+    if(task.plan_state==='pending')return openPlan(task);
+    state.selected=task;state.screen='edit';render();
+  }
+  function findWork(work){
+    workScope=recordScope(work);state.query=workScope.subjectId||workScope.name;
+    state.filter='all';state.page=0;state.screen='tasks';state.selected=null;
+  }
+  return {render,refresh,suspend,preload,openTask,findWork};
 }
 module.exports={create};
